@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.4</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.platform</groupId>
+    <artifactId>openapi-testing-platform</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>OpenAPI Testing Platform (Root)</name>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        
+        <!-- Dependencies Versions -->
+        <swagger-parser.version>2.1.22</swagger-parser.version>
+        <json-schema-validator.version>1.5.1</json-schema-validator.version>
+        <json-path.version>2.9.0</json-path.version>
+        <hypersistence-utils.version>3.8.3</hypersistence-utils.version>
+    </properties>
+
+    <modules>
+        <module>backend</module>
+        <module>worker</module>
+        <module>sample-api</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Swagger / OpenAPI Parser V3 -->
+            <dependency>
+                <groupId>io.swagger.parser.v3</groupId>
+                <artifactId>swagger-parser</artifactId>
+                <version>${swagger-parser.version}</version>
+            </dependency>
+
+            <!-- JSON Schema Validator (For Assertion Engine) -->
+            <dependency>
+                <groupId>com.networknt</groupId>
+                <artifactId>json-schema-validator</artifactId>
+                <version>${json-schema-validator.version}</version>
+            </dependency>
+
+            <!-- JSONPath -->
+            <dependency>
+                <groupId>com.jayway.jsonpath</groupId>
+                <artifactId>json-path</artifactId>
+                <version>${json-path.version}</version>
+            </dependency>
+
+            <!-- Hibernate Types / Hypersistence for seamless JSONB mapping in PostgreSQL -->
+            <dependency>
+                <groupId>io.hypersistence</groupId>
+                <artifactId>hypersistence-utils-hibernate-63</artifactId>
+                <version>${hypersistence-utils.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

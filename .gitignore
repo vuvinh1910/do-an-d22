@@ -1,0 +1,40 @@
+# Target & Build
+**/target/
+**/build/
+**/dist/
+**/out/
+*.class
+
+# Node / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.secret
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Docker data volume (if mapped locally)
+postgres_data/
+rabbitmq_data/

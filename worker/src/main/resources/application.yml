@@ -1,0 +1,39 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: test-execution-worker
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/openapi_testing_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgrespassword}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:rabbitmq}
+    password: ${SPRING_RABBITMQ_PASSWORD:rabbitmqpassword}
+    listener:
+      simple:
+        concurrency: 2
+        max-concurrency: 5
+        prefetch: 1
+
+app:
+  rabbitmq:
+    exchange: test.exchange
+    queue:
+      execution: test.execution.queue
+      result: test.result.queue
+    routing-key:
+      execution: test.execution.key
+      result: test.result.key
