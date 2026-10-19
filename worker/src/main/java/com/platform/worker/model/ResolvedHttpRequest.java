@@ -6,7 +6,6 @@ import org.springframework.http.HttpMethod;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /** Internal runner input: URI includes resolved path and query, not a wire contract DTO. */
 public record ResolvedHttpRequest(
@@ -16,8 +15,20 @@ public record ResolvedHttpRequest(
         JsonNode body
 ) {
     public ResolvedHttpRequest {
-        headers = headers == null ? Map.of() : headers.entrySet().stream()
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey,
-                        entry -> List.copyOf(entry.getValue())));
+        if (method == null) {
+            throw new IllegalArgumentException("Resolved request method is required");
+        }
+        if (uri == null || !("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawFragment() != null
+                || uri.getPort() > 65535 || uri.getRawAuthority().endsWith(":")) {
+            throw new IllegalArgumentException("Resolved request URI must be HTTP(S) without credentials or fragment");
+        }
+        headers = ModelSnapshots.headers(headers);
+        body = ModelSnapshots.json(body);
+    }
+
+    @Override
+    public JsonNode body() {
+        return ModelSnapshots.json(body);
     }
 }

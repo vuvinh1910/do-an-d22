@@ -2,7 +2,7 @@
 
 ## Phạm vi và cách làm
 
-**Ưu tiên hiện tại:** R1 đã rà soát ở mức builder; tiếp tục R2 -> R3 trong [REVIEW_PLAN.md](REVIEW_PLAN.md) trước B3. Hành vi URI trên wire vẫn cần kiểm chứng khi có HTTP runner.
+**Ưu tiên hiện tại:** R1–R2 đã hoàn thành ở mức builder/model; tiếp tục R3 trong [REVIEW_PLAN.md](REVIEW_PLAN.md) trước B3. Hành vi URI trên wire vẫn cần kiểm chứng khi có HTTP runner.
 
 - Nhánh triển khai: `vinh`.
 - Chỉ thay đổi module Worker; không tự sửa backend, frontend, migration hoặc contract chung.
@@ -120,3 +120,13 @@ Task 2.7 hiện yêu cầu lưu PostgreSQL. Không tự bật thêm result queue
 - Giữ empty/dot path để không làm sai negative test, không tự normalize; chưa chứng minh HTTP client/server giữ nguyên trên wire.
 - `clean test`: 74 tests, 0 failures/errors/skipped; BUILD SUCCESS.
 - Tiếp theo: R2 — model ownership, null/absent và error semantics. Chưa viết runner.
+
+### Lượt R2 — Model ownership và error semantics
+
+- Regression trước sửa: 7 failures/9 tests, xác nhận alias nested JSON, absent body serialization, lỗi null thiếu ngữ cảnh và thiếu kiểm tra trạng thái nội bộ.
+- Copy sâu JSON chuẩn ở constructor/accessor cho template body/query và resolved body; helper package-local dùng chung map/header snapshots.
+- Body absent bỏ khỏi serialization; explicit NullNode giữ JSON null; fixture contract round-trip không đổi field.
+- Quy định complete/transport/partial response, latency không âm, thông báo validation không chứa giá trị đầu vào.
+- Resolved method bắt buộc, URI HTTP(S) không credentials/fragment/port sai; chưa thay thế SSRF policy hoặc validation trên HTTP client. Giữ payload negative và thiếu auth nguyên trạng.
+- 18 regression tests mới; `clean test`: 92 tests, 0 failures/errors/skipped; BUILD SUCCESS.
+- Tiếp theo R3 — chốt test server, API runner và ma trận HTTP trước B3. Chưa triển khai HTTP runner; chưa commit lượt R2.

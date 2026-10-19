@@ -50,12 +50,14 @@ Hoàn thành: regression tests có ý nghĩa, toàn bộ test worker pass, READM
 
 ### R2 — Model, ownership và lỗi đầu vào (sau R1, trước B3)
 
-- [ ] Xác định ai sở hữu JsonNode: snapshot khi tạo hoặc copy ở ranh giới xử lý. Viết test mutate nested body/query để chứng minh template không bị thay; không gọi record là deep immutable khi chưa đúng.
-- [ ] Rà null map/list/value từ JSON và Java constructor; dùng lỗi có ngữ cảnh thay vì NullPointerException vô nghĩa. Phân biệt explicit JSON null với absent body.
-- [ ] Xác định trạng thái hợp lệ của HttpResponseData: response HTTP, transport failure và response đọc dở; tránh bịa status/body khi không nhận được.
-- [ ] Rà method/URI/header validation ở đúng ranh giới; giữ dữ liệu negative test có chủ đích. Không tự thêm Content-Type/Authorization hoặc body mặc định làm sai test AUTH/MISSING_REQUIRED.
-- [ ] Kiểm tra serialization round-trip từ fixture contract; không thêm trường wire contract ngoài tài liệu nhóm.
-- [ ] Loại bỏ trùng lặp khi có lợi, nhưng không tạo utility tổng quát cho vài dòng code đơn giản.
+- [x] Snapshot JsonNode chuẩn từ JSON parser ở constructor và accessor; regression mutate nested body/query. Không cam kết custom JsonNode/POJONode bọc object tùy ý.
+- [x] Null map thành rỗng; null entry/list element báo IllegalArgumentException có tên trường, không lộ dữ liệu. Absent body và explicit JSON null round-trip khác nhau.
+- [x] HttpResponseData phân biệt complete/transport/partial response; giữ thông tin đã nhận, không bịa status/body, latency không âm.
+- [x] Resolved request kiểm tra method có mặt và URI HTTP(S); header syntax/token method để ranh giới client B3. Không sửa negative payload, không tự thêm auth/content type.
+- [x] Fixture và round-trip pass; không thêm field wire contract.
+- [x] ModelSnapshots package-local chia sẻ copy/kiểm tra map cho ba model, không thêm dependency.
+
+Kết quả R2: 18 regression test mới; `clean test` tổng 92 tests pass, 0 failures/errors/skipped. Hành vi runner/wire vẫn chờ R3/B3.
 
 Hoàn thành: ownership và error semantics được ghi rõ, regression tests pass, model vẫn dễ dùng và không đổi wire contract.
 
@@ -140,5 +142,5 @@ Chi tiết nội bộ có thể tự chọn và ghi rationale. Nếu cần đổ
 ## 8. Bàn giao lượt lập kế hoạch rà soát
 
 - Chỉ thêm/cập nhật tài liệu, chưa sửa các lỗi/giới hạn B1–B2 và chưa viết B3.
-- Điểm bắt đầu tiếp theo: **R1 — regression cho path có dấu `:` và rà soát URI**, rồi R2, R3; chưa nhảy thẳng sang HTTP Runner.
+- Điểm bắt đầu tiếp theo: **R3 — chốt thiết kế HTTP và ma trận test**; R1–R2 đã hoàn thành ở mức builder/model, chưa nhảy thẳng sang HTTP Runner.
 - Mốc 57 test pass là baseline chức năng nhỏ, không phải bằng chứng toàn worker đã hoàn thiện.

@@ -1,5 +1,6 @@
 package com.platform.worker.model;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.Map;
@@ -14,8 +15,20 @@ public record TestCaseRequest(
         JsonNode body
 ) {
     public TestCaseRequest {
-        headers = headers == null ? Map.of() : Map.copyOf(headers);
-        pathParams = pathParams == null ? Map.of() : Map.copyOf(pathParams);
-        queryParams = queryParams == null ? Map.of() : Map.copyOf(queryParams);
+        headers = ModelSnapshots.entries(headers, "headers");
+        pathParams = ModelSnapshots.entries(pathParams, "pathParams");
+        queryParams = ModelSnapshots.query(queryParams);
+        body = ModelSnapshots.json(body);
+    }
+
+    @Override
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public JsonNode body() {
+        return ModelSnapshots.json(body);
+    }
+
+    @Override
+    public Map<String, JsonNode> queryParams() {
+        return ModelSnapshots.query(queryParams);
     }
 }

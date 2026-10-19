@@ -24,7 +24,7 @@ worker/src/main/java/com/platform/worker/
 Theo dõi các đầu việc nhỏ, trạng thái kiểm thử và bàn giao trong [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 Tiêu chuẩn chất lượng, các điểm cần rà lại và hướng dẫn tiếp tục mỗi phiên nằm trong
-[REVIEW_PLAN.md](REVIEW_PLAN.md). R1 đã rà soát ở mức builder; tiếp theo R2–R3 trước B3.
+[REVIEW_PLAN.md](REVIEW_PLAN.md). R1–R2 đã hoàn thành ở mức builder/model; tiếp theo R3 trước B3.
 
 ## Chạy test
 
@@ -56,9 +56,13 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
 - `TestCaseRequest`: request template theo contract (`method`, `path`, `headers`, `pathParams`, `queryParams`, `body`). Map bị thiếu được chuẩn hóa thành map rỗng.
 - `ResolvedHttpRequest`: input nội bộ cho runner; URI sẽ bao gồm path/query đã resolve, headers hỗ trợ nhiều giá trị.
 - `HttpResponseData`: output nội bộ, giữ status, headers, body gốc dạng String, latency và thông tin lỗi. Lỗi transport không cần mã HTTP giả.
-- Body request dùng Jackson `JsonNode` để giữ kiểu object/array/scalar/null. Các bước xử lý sau không được sửa JsonNode của template gốc.
+- Body/query dùng Jackson `JsonNode` chuẩn từ JSON parser: constructor và accessor đều copy sâu object/array, tránh sửa template qua tham chiếu bên ngoài. Accessor trả bản sao có thể sửa, không phải view vào model. Không cam kết ownership cho custom JsonNode/POJONode bọc Java object tùy ý.
+- Java `null` body là không có body; `NullNode` là JSON `null`. Khi serialize template, body vắng mặt được bỏ qua, JSON `null` vẫn xuất hiện. Không thêm field contract.
+- Map thiếu hoặc null trở thành map rỗng. Java null key/value/list element bị từ chối với tên trường, không đưa giá trị đầu vào vào lỗi; JSON null trong query vẫn được giữ dưới dạng NullNode.
+- `ResolvedHttpRequest` yêu cầu method và URI HTTP(S) có host, không credentials/fragment/port không hợp lệ. Chưa validation cú pháp header/token method đầy đủ; ranh giới gửi HTTP sẽ xử lý ở B3. Không tự thêm Content-Type/Authorization hoặc sửa payload negative test.
+- `HttpResponseData`: response hoàn chỉnh có status 3 chữ số, body String (rỗng nếu không có bytes), error null; lỗi transport có status/body null, headers rỗng và error không rỗng; lỗi đọc response giữ status/headers đã nhận, body null hoặc phần đã đọc và error không rỗng. Latency không âm. Đây là semantics model, chưa có runner chứng minh hành vi trên wire.
 
-Model không tự thực hiện validation, interpolation, URI encoding hoặc gửi HTTP.
+Model chỉ validation cấu trúc nội bộ nêu trên, không kiểm tra business/schema payload, interpolation, URI encoding hoặc gửi HTTP.
 Test model/fixture hiện chạy độc lập với PostgreSQL và RabbitMQ.
 
 ## Dựng URI (B2)
