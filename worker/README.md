@@ -18,3 +18,62 @@ worker/src/main/java/com/platform/worker/
 ├── context/         # Variable Interpolation & Runtime Context (Chaining)
 └── model/           # DTOs khớp với docs/api-contract/
 ```
+
+## Kế hoạch triển khai
+
+Theo dõi các đầu việc nhỏ, trạng thái kiểm thử và bàn giao trong [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
+Tiêu chuẩn chất lượng, các điểm cần rà lại và hướng dẫn tiếp tục mỗi phiên nằm trong
+[REVIEW_PLAN.md](REVIEW_PLAN.md). R1 đã rà soát ở mức builder; tiếp theo R2–R3 trước B3.
+
+## Chạy test
+
+Yêu cầu JDK 21 và Maven có trong PATH. Từ thư mục gốc repository:
+
+```powershell
+mvn -pl worker -am test
+```
+
+Test nền tảng `WorkerApplicationTest` chỉ kiểm tra annotation cấu hình và chữ ký entry point;
+không gọi `main`, không khởi động Spring context và không cần PostgreSQL/RabbitMQ.
+Đây không phải test khởi động toàn bộ ứng dụng hay test tích hợp.
+
+Repository hiện chưa có Maven Wrapper. Nếu lệnh `mvn` không được nhận diện,
+cần chuẩn bị Maven trước khi có thể xác nhận compile hoặc JUnit thành công.
+
+Trên máy triển khai hiện tại, đã chuẩn bị Maven portable 3.9.9 ngoài repository.
+Từ thư mục gốc repository có thể chạy (không cần thay đổi PATH hệ thống):
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
+& "$env:LOCALAPPDATA\vinh-worker-tools\apache-maven-3.9.9\bin\mvn.cmd" -B -ntp -pl worker -am clean test
+```
+
+Đường dẫn JDK/Maven trên là cấu hình máy hiện tại, không phải yêu cầu đường dẫn cho máy khác.
+
+## Model HTTP hiện có
+
+- `TestCaseRequest`: request template theo contract (`method`, `path`, `headers`, `pathParams`, `queryParams`, `body`). Map bị thiếu được chuẩn hóa thành map rỗng.
+- `ResolvedHttpRequest`: input nội bộ cho runner; URI sẽ bao gồm path/query đã resolve, headers hỗ trợ nhiều giá trị.
+- `HttpResponseData`: output nội bộ, giữ status, headers, body gốc dạng String, latency và thông tin lỗi. Lỗi transport không cần mã HTTP giả.
+- Body request dùng Jackson `JsonNode` để giữ kiểu object/array/scalar/null. Các bước xử lý sau không được sửa JsonNode của template gốc.
+
+Model không tự thực hiện validation, interpolation, URI encoding hoặc gửi HTTP.
+Test model/fixture hiện chạy độc lập với PostgreSQL và RabbitMQ.
+
+## Dựng URI (B2)
+
+`RequestUriBuilder.build(baseUrl, request)` tạo URI, không gửi HTTP hoặc sửa request template.
+
+- Chấp nhận HTTP/HTTPS base URL, giữ path/query có sẵn. Không chấp nhận credentials hoặc fragment trong base URL.
+- `path` chỉ chứa đường dẫn API, không phải absolute URL và không chứa query/fragment. Query bổ sung đặt trong `queryParams`.
+- Dấu `:` trong path như `/users:search` được hỗ trợ; chuỗi bắt đầu bằng scheme như `https:other` bị từ chối. Base URL parse lỗi không được đưa nguyên URL/cause có thể chứa credential vào exception.
+- `{id}` lấy giá trị từ `pathParams`. Giá trị được encode như dữ liệu; `/`, `?`, `#`, `%` không được dùng để chèn cấu trúc URI.
+- Static path có percent encoding hợp lệ được giữ nguyên; path/query parameter phải cung cấp giá trị chưa encode để tránh double encoding.
+- Query scalar chuyển thành text; array scalar dùng key lặp lại (`tag=a&tag=b`). Null/mảng rỗng được bỏ qua; chuỗi rỗng giữ `key=`. Key mới được sắp xếp, query có sẵn giữ nguyên thứ tự và encoding.
+- Query trùng key với base URL được nối thêm, không ghi đè; null trong array bị bỏ qua, empty key được giữ.
+- Path parameter rỗng, `.`/`..` và static dot segments được giữ nguyên, không tự normalize để tránh sửa dữ liệu negative test. Percent trong tham số vẫn encode; `%2e` đầu vào trở thành `%252e`. Hành vi trên wire/client/server sẽ được kiểm chứng khi triển khai runner; builder không phải bộ chặn path traversal.
+- Query object/nested array chưa được hỗ trợ; builder báo lỗi thay vì đoán serialization. Đây không phải bộ serialization đầy đủ cho mọi style/explode của OpenAPI.
+- Thiếu path parameter, biến `{{...}}` chưa được thay hoặc URI không hợp lệ gây `IllegalArgumentException`. Runtime interpolation sẽ được triển khai ở D1, trước khi gọi builder.
+
+Validation URI không thay thế chính sách chống SSRF/allowlist cho worker thực thi.
