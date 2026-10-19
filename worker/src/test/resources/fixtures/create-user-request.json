@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/api/v1/users",
+  "headers": {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {{auth_token}}"
+  },
+  "pathParams": {},
+  "queryParams": {},
+  "body": {
+    "username": "tester01",
+    "email": "tester01@example.com",
+    "age": 18,
+    "role": "MEMBER"
+  }
+}
