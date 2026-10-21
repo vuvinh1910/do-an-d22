@@ -2,6 +2,7 @@ package com.platform.worker.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,7 +14,37 @@ final class ModelSnapshots {
     }
 
     static JsonNode json(JsonNode value) {
+        validateJson(value);
         return value == null ? null : value.deepCopy();
+    }
+
+    /** Validate iteratively before deepCopy/equals/hashCode can recurse into caller-owned trees. */
+    private static void validateJson(JsonNode root) {
+        if (root == null) {
+            return;
+        }
+        record Entry(JsonNode node, int depth) { }
+        var pending = new ArrayDeque<Entry>();
+        pending.push(new Entry(root, 0));
+        int count = 0;
+        while (!pending.isEmpty()) {
+            var entry = pending.pop();
+            JsonNode node = entry.node();
+            if (++count > 10000 || entry.depth() > 256 || node == null || node.isMissingNode()
+                    || node.isPojo() || node.isBinary()
+                    || ((node.isDouble() || node.isFloat()) && !Double.isFinite(node.doubleValue()))) {
+                throw new IllegalArgumentException("JSON value is unsupported or exceeds structure limits");
+            }
+            if (node.isContainerNode()) {
+                // Count while enqueueing as well: a wide tree must not create an unbounded work queue.
+                for (JsonNode child : node) {
+                    if ((long) count + pending.size() >= 10000) {
+                        throw new IllegalArgumentException("JSON value is unsupported or exceeds structure limits");
+                    }
+                    pending.push(new Entry(child, entry.depth() + 1));
+                }
+            }
+        }
     }
 
     static <T> Map<String, T> entries(Map<String, T> source, String field) {

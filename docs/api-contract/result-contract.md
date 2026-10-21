@@ -124,3 +124,40 @@ Tài liệu này định nghĩa cấu trúc dữ liệu của **Kết quả th�
 * `FAILED`: Ít nhất một assertion không thỏa mãn (hoặc HTTP status không đúng kỳ vọng).
 * `ERROR`: Lỗi mạng, timeout, không kết nối được đến server mục tiêu.
 * `SKIPPED`: Bị bỏ qua (ví dụ do một bước phụ thuộc trước đó bị FAIL).
+
+## `assertionResults` cho HEADER
+
+Giữ nguyên sáu field kết quả rule; tên header nằm trong rule gốc (`headerName`), không thêm field vào result.
+
+```json
+{
+  "ruleId": "rule-header",
+  "type": "HEADER",
+  "passed": true,
+  "expected": "application/json",
+  "actual": ["application/json;charset=UTF-8"],
+  "message": "Header assertion passed"
+}
+```
+
+- `actual` luôn là JSON array string chứa các giá trị của header được chọn, không split/join. Thiếu header hoặc list rỗng -> `[]`, passed false.
+- Các entry khác casing được thu thập cùng nhau; thứ tự giữa các entry map không được đảm bảo, không phải tiêu chí PASS/FAIL. Thứ tự trong từng list được giữ.
+- Với NOT_NULL, expected absent hoặc JSON null ở rule được trả thành `expected: null` trong result.
+- Message không echo header name/value; `expected`/`actual` vẫn là dữ liệu raw, cần chính sách redaction ở tầng publish/persistence sau này.
+
+## `assertionResults` cho JSON_SCHEMA (worker C5)
+
+Giữ sáu field của ví dụ trên. `expected` là chuỗi cố định `Response body conforms to supplied Draft 7 schema` (schema gốc nằm trong rule), `actual` là `valid` khi PASS hoặc `invalid` khi FAIL.
+
+- PASS: message `Schema validation passed`.
+- JSON hợp lệ nhưng vi phạm schema: message `Schema validation failed`.
+- Body không phải một JSON document hợp lệ: message `Response body is not valid JSON`, actual `invalid`.
+- Không echo body, schema, path hoặc diagnostic thô của validator trong result/exception. Đây là kết quả tóm tắt, chưa có chi tiết keyword/path phục vụ UI.
+- Schema cấu hình sai/chưa hỗ trợ -> IllegalArgumentException; execution error hoặc validator không thể hoàn tất -> IllegalStateException ở evaluator. Engine/orchestration chịu trách nhiệm mapping ERROR; không biến chúng thành assertion FAIL.
+
+## Tổng hợp assertion (worker C6)
+
+- Giữ thứ tự input và trả một result cho mỗi rule hợp lệ; tiếp tục sau assertion FAIL, không short-circuit. Tất cả PASS -> passed true; ít nhất một FAIL -> passed false.
+- List rỗng explicit -> results rỗng, passed true (không có assertion failure); không tự suy ra HTTP 2xx. List null, rule null, id trống/trùng hoặc type chưa hỗ trợ là lỗi cấu hình, không bỏ qua rule.
+- Lỗi cấu hình hoặc validator không hoàn tất làm lần evaluate không trả summary/partial results; execution error bị từ chối ngay cả khi list rỗng. Tầng orchestration sau này mapping ERROR, không publish PASSED/FAILED từ một lần evaluate chưa hoàn tất.
+- Summary là object nội bộ, chưa phải TestResult DTO hay Spring/RabbitMQ integration. Không thêm trạng thái wire mới.
