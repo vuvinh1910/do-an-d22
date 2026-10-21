@@ -23,11 +23,11 @@ Tài liệu này là bộ nhớ bàn giao trong repository, không phải cam k�
 
 ## 3. Hiện trạng đã xác nhận
 
-- Nhánh: `vinh`; A1/A2/B1/B2 đã triển khai bước đầu, B1/B2 chưa qua vòng rà soát dưới đây.
-- Có 3 model, RequestUriBuilder, fixture request, 57 test pass ở lần chạy trước (40 URI, 15 model, 2 kiểm tra cấu trúc application).
-- Chưa có HTTP runner, assertion, interpolation, persistence hoặc listener. Test application không chứng minh ứng dụng khởi động được.
+- Nhánh: `vinh`; A1/A2/B1/B2 và rà soát R1–R3 đã hoàn thành ở phạm vi ghi dưới đây.
+- Baseline sau R2: 92 tests pass; R3 thêm 5 probes, B3.1 thêm 7 runner tests, B3.2 thêm 24 request wire tests, B3.3 thêm 27 response wire tests, B4.1 thêm 7 lifecycle tests, B4.2 thêm 2 logging policy tests. Tổng 164 tests pass (parent + worker clean test).
+- Hoàn thành mốc B trong phạm vi local HTTP và suppression transport logs; chưa assertion, interpolation, persistence hoặc listener. Test application không chứng minh ứng dụng khởi động được hoặc production security.
 - Java 21; Maven portable 3.9.9 ngoài repository, xem lệnh chạy ở README.
-- Các file đang thay đổi chưa commit. Không coi chúng là thay đổi lạ cần xóa khi tiếp tục.
+- R2 đã commit/push ở abac3a2. Lượt R3 hiện chưa commit; kiểm tra git status thực tế khi tiếp tục.
 
 ## 4. Rà soát trước khi viết B3
 
@@ -63,12 +63,14 @@ Hoàn thành: ownership và error semantics được ghi rõ, regression tests p
 
 ### R3 — Kế hoạch test HTTP và chốt thiết kế B3
 
-- [ ] Chọn server test cục bộ tương thích stack hiện tại; chỉ thêm thư viện khi có lý do và kiểm tra version.
-- [ ] Chọn API runner nhất quán với WebClient; không block Reactor event loop, không trộn reactive/blocking tùy tiện.
-- [ ] Quy định xử lý method, JSON string vs raw text, absent body vs JSON null, headers case-insensitive/multiple, response charset, redirect, HEAD/204.
-- [ ] Không tự follow redirect làm mất 3xx; nếu có tùy chọn phải rõ và không mang secret sang host khác.
-- [ ] Có timeout nền an toàn cho test ngay từ B3; B4 làm đầy đủ phân loại timeout/network/partial response, không để test treo vì chờ đến B4.
-- [ ] Test ghi nhận raw URI, method, headers và bytes/body thực nhận, không chỉ mock WebClient rồi kiểm tra invocation.
+- [x] Chọn JDK HttpServer loopback/port ngẫu nhiên; không thêm dependency. Probe có teardown và timeout.
+- [x] Chọn API Mono<HttpResponseData>, không block trong runner, ghi ranh giới cấu hình/transport.
+- [x] Ghi quy tắc method/body/header/charset/HEAD/204 và giới hạn trong HTTP_RUNNER_DESIGN.md; cần chứng minh qua runner ở B3.
+- [x] Không redirect/retry implicit; probe xác nhận nhận 302 không gọi destination.
+- [x] Probe có timeout hữu hạn; thiết kế B3 có toàn-exchange deadline, B4 mở rộng phân loại lỗi.
+- [x] Probe ghi raw URI, request bytes/Content-Type và response thật; method/header coverage đầy đủ còn ở ma trận B3.
+
+Bằng chứng R3: WebClientTransportProbeTest 5 tests pass. Thiết kế và ma trận nằm trong HTTP_RUNNER_DESIGN.md, chưa có runner production.
 
 Hoàn thành: ma trận request/response và phương án test được ghi lại, sau đó mới triển khai B3 theo từng nhóm hành vi.
 
@@ -139,8 +141,8 @@ Chi tiết nội bộ có thể tự chọn và ghi rationale. Nếu cần đổ
 - Đọc lại mọi file mới/sửa; kiểm tra git diff/status, không credential hoặc thay đổi module ngoài ý muốn.
 - Cập nhật README khi hành vi đổi và nhật ký checklist, chỉ định đúng một đầu việc tiếp theo.
 
-## 8. Bàn giao lượt lập kế hoạch rà soát
+## 8. Bàn giao hiện tại và baseline lịch sử
 
-- Chỉ thêm/cập nhật tài liệu, chưa sửa các lỗi/giới hạn B1–B2 và chưa viết B3.
-- Điểm bắt đầu tiếp theo: **R3 — chốt thiết kế HTTP và ma trận test**; R1–R2 đã hoàn thành ở mức builder/model, chưa nhảy thẳng sang HTTP Runner.
+- Lượt lập kế hoạch ban đầu chỉ sửa tài liệu; sau đó R1–R3 và B3/B4 đã được triển khai/kiểm chứng như mục trạng thái ở trên.
+- Điểm bắt đầu tiếp theo: **C1 — assertion rule/result và STATUS_CODE** theo contract (expected 400/actual 400 phải pass). Mốc B đã kiểm chứng trên loopback; transport logs bị suppress theo Boot config, không có global redaction hoặc bảo đảm an toàn khi override logger/log DTO.
 - Mốc 57 test pass là baseline chức năng nhỏ, không phải bằng chứng toàn worker đã hoàn thiện.

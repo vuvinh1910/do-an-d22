@@ -2,7 +2,7 @@
 
 ## Phạm vi và cách làm
 
-**Ưu tiên hiện tại:** R1–R2 đã hoàn thành ở mức builder/model; tiếp tục R3 trong [REVIEW_PLAN.md](REVIEW_PLAN.md) trước B3. Hành vi URI trên wire vẫn cần kiểm chứng khi có HTTP runner.
+**Ưu tiên hiện tại:** Hoàn thành mốc B trong phạm vi HTTP loopback đã công bố; tiếp theo C1 — model assertion/result và STATUS_CODE theo contract. Giới hạn runner ghi tại [HTTP_RUNNER_DESIGN.md](HTTP_RUNNER_DESIGN.md).
 
 - Nhánh triển khai: `vinh`.
 - Chỉ thay đổi module Worker; không tự sửa backend, frontend, migration hoặc contract chung.
@@ -29,8 +29,8 @@
 
 - [x] B1: Model request/response tối thiểu và fixture; test JSON object/array/scalar/null; phân biệt contract request và request đã resolve.
 - [x] B2: Ghép base URL/path, path parameters, query parameters; test encoding, Unicode và đầu vào không hợp lệ.
-- [ ] B3: WebClient gửi request, giữ headers/body/status kể cả HTTP 4xx/5xx, đo latency đến khi nhận xong body; test GET/POST và các method còn lại, 204, text, 400/500.
-- [ ] B4: Timeout và lỗi mạng; test phản hồi chậm, connection failure và đóng kết nối; chưa retry.
+- [x] B3: WebClient gửi request, giữ headers/body/status kể cả HTTP 4xx/5xx, đo latency đến khi nhận xong body; test GET/POST và các method còn lại, 204, text, 400/500. Hoàn thành phạm vi B3.1–B3.3, lỗi mạng/lifecycle còn B4.
+- [x] B4: Timeout và lỗi mạng; test phản hồi chậm, connection failure và đóng kết nối; chưa retry. B4.2 rà soát mapping lỗi và suppression transport logs; không phải chứng nhận production security.
 
 Mốc B: Runner chạy với HTTP server cục bộ; không cần backend, broker hoặc database.
 
@@ -130,3 +130,56 @@ Task 2.7 hiện yêu cầu lưu PostgreSQL. Không tự bật thêm result queue
 - Resolved method bắt buộc, URI HTTP(S) không credentials/fragment/port sai; chưa thay thế SSRF policy hoặc validation trên HTTP client. Giữ payload negative và thiếu auth nguyên trạng.
 - 18 regression tests mới; `clean test`: 92 tests, 0 failures/errors/skipped; BUILD SUCCESS.
 - Tiếp theo R3 — chốt test server, API runner và ma trận HTTP trước B3. Chưa triển khai HTTP runner; chưa commit lượt R2.
+
+### Lượt R3 — Thiết kế và transport probe
+
+- R2 đã commit/push abac3a2 ở phiên trước; đầu phiên R3 nhánh vinh sạch, đồng bộ origin/vinh.
+- Chọn JDK HttpServer + WebClient/Reactor Netty hiện có, không thêm dependency hoặc sửa production code.
+- Thêm 5 transport probe tests: raw encoded URI, 400/body/multi-cookie, absent/null/negative body không tự thêm Content-Type, redirect 302 không follow.
+- Ghi API reactive, ranh giới cấu hình/transport, serialization/charset/timeout/resource policy và ma trận B3/B4 trong HTTP_RUNNER_DESIGN.md.
+- Probe chỉ chứng minh tính khả thi transport, không phải runner đã hoàn thành. Tiếp theo B3.1 GET 200 + cold publisher + timeout nền; chưa commit/push lượt này.
+- Kiểm chứng cuối lượt: `clean test` parent + worker BUILD SUCCESS, 97 tests, 0 failures/errors/skipped (92 baseline + 5 probe); git diff --check không lỗi.
+
+### Lượt B3.1 — Runner GET và deadline nền
+
+- Thêm WebClientHttpRunner concrete, Mono.defer cho từng subscription, không block/subscribe nội bộ; chưa Spring wiring.
+- Gửi URI overload, headers nhiều giá trị, JSON bytes; cấu hình không redirect/implicit retry/compression, connect cap 10s, codec cap 1 MiB.
+- Validation input/method/header/framing và serialization tách khỏi transport errors; lỗi kết quả không echo message/cause đầu vào.
+- Deadline toàn exchange; giữ status/headers đã nhận nếu timeout body, latency nanoTime tới completion/error. Volatile status công bố headers sang timeout scheduler.
+- 7 test runner: GET UTF-8/raw target/multi-cookie, cold/repeated subscribe, delayed body/latency, timeout trước headers/trong body, cấu hình không hợp lệ.
+- Chưa hoàn thành toàn B3/B4. Tiếp theo B3.2 — kiểm chứng JSON bytes/method/header và URI builder trên wire; chưa commit/push.
+- Kiểm chứng: test mục tiêu ban đầu 6/6 pass; sau bổ sung validation, `clean test` parent + worker 104 tests, 0 failures/errors/skipped, BUILD SUCCESS; git diff --check không lỗi.
+
+### Lượt B3.2 — Request trên wire
+
+- Thêm WebClientRequestWireTest, 24 tests capture request thật và assert trên test thread; không sửa production code hoặc thêm dependency.
+- Chứng minh JSON bytes UTF-8 đúng kiểu, null vs absent, negative body/missing auth/content type không bị sửa.
+- Kiểm chứng GET/POST/PUT/PATCH/DELETE/OPTIONS giữ body; HEAD không body; multi-value/case-insensitive headers không mất dữ liệu. Không cam kết thứ tự giữa header key khác casing.
+- Builder -> runner giữ encoded slash/percent/Unicode, base path/query, repeated query, colon path, empty và dot segments trên loopback.
+- Test mục tiêu: 24 pass, 0 failures/errors/skipped. Tiếp theo B3.3 response status/charset/size-limit; chưa commit/push.
+- Kiểm chứng toàn worker: `clean test` parent + worker BUILD SUCCESS, 128 tests, 0 failures/errors/skipped; git diff --check không lỗi.
+
+### Lượt B3.3 — Response và giới hạn
+
+- Regression trước sửa: 4 failures/22 tests, xác nhận malformed bytes bị thay âm thầm và lỗi charset chưa phân loại rõ.
+- Thêm custom response cap dương, mặc định 1 MiB. Đọc bounded raw buffers, release sau copy rồi strict decode; tránh codec parse Content-Type trước khi có bytes.
+- 27 response tests pass: status/error body, empty/HEAD/204, redirect, charset/fallback/malformed, chunked cap mặc định ±1 byte và cap tùy chỉnh fixed-length/UTF-8 bytes.
+- `clean test` parent + worker: 155 tests, 0 failures/errors/skipped; BUILD SUCCESS. Không thêm dependency/đổi contract; chưa commit/push.
+- Tiếp theo B4.1 — connection failure/đóng kết nối/deadline chunks/cancellation/isolation, chưa retry.
+
+### Lượt B4.1 — Lỗi mạng và subscription lifecycle
+
+- Thêm WebClientLifecycleWireTest với TCP server loopback/random port, socket read/accept timeout, Future.get hữu hạn và teardown socket/executor.
+- 7 tests: refused connection; đóng trước/sau headers không retry (cửa sổ quan sát 600ms); deadline toàn exchange với chunks; cancellation trước/sau headers đóng socket và không phát signal; subscribe lại cùng Mono thành công; hai subscriptions chồng lấn không lẫn status/headers/body/error.
+- Không phát hiện regression cần sửa production code; không thêm dependency/retry/wiring hoặc đổi contract.
+- Targeted riêng: 7 tests pass; parent + worker clean test: 162 tests, 0 failures/errors/skipped, BUILD SUCCESS. Lệnh chạy lặp 3 lần bị tool timeout 30s, không tính là 3 lượt pass được xác nhận.
+- Reactor Netty có WARN PrematureCloseException dự kiến từ fixture; thông báo lỗi trong HttpResponseData vẫn cố định. Chưa chứng minh logging transport an toàn cho secret thật.
+- Tiếp theo B4.2: rà soát mapping lỗi, logging/redaction và phạm vi hỗ trợ; chưa coi B4/production readiness hoàn tất. Không commit/push.
+
+### Lượt B4.2 — Mapping lỗi và logging policy
+
+- Mapping lỗi đã được review: timeout/size/decode có thông báo cố định; lỗi khác trước status -> transport, sau status -> read; configuration errors throw ngay, cancellation không tạo result. HTTP 4xx/5xx không tự là execution error.
+- Chứng minh qua positive control rằng malformed Content-Length chứa marker xuất hiện trong WARN Netty. Thêm mặc định OFF cho reactor.netty, io.netty và Spring reactive HTTP client logger trong application.yml; không thay đổi logger toàn cục từ runner.
+- HttpClientLoggingPolicyTest: 2 tests nạp YAML thật, áp dụng/khôi phục mức logger trong finally, kiểm tra marker có ở WARN và không có khi OFF. Không chạy Spring context hoặc hạ tầng DB/broker; không chứng minh toàn ứng dụng redaction.
+- Targeted 2 tests pass; parent + worker clean test: 164 tests, 0 failures/errors/skipped, BUILD SUCCESS. Test đối chứng chủ động in marker giả; test khác không nạp Boot YAML nên WARN fixture vẫn có thể xuất hiện.
+- Hoàn thành B theo phạm vi local HTTP; tiếp theo C1 — assertion rule/result và STATUS_CODE (expected 400/actual 400 phải pass). Không thêm dependency/retry/bean wiring hoặc sửa contract. Chưa commit/push.

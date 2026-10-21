@@ -24,7 +24,31 @@ worker/src/main/java/com/platform/worker/
 Theo dõi các đầu việc nhỏ, trạng thái kiểm thử và bàn giao trong [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 Tiêu chuẩn chất lượng, các điểm cần rà lại và hướng dẫn tiếp tục mỗi phiên nằm trong
-[REVIEW_PLAN.md](REVIEW_PLAN.md). R1–R2 đã hoàn thành ở mức builder/model; tiếp theo R3 trước B3.
+[REVIEW_PLAN.md](REVIEW_PLAN.md). Mốc B đã kiểm chứng trong phạm vi local HTTP; tiếp theo C1 — assertion models/result và STATUS_CODE.
+API runner và ma trận test nằm trong [HTTP_RUNNER_DESIGN.md](HTTP_RUNNER_DESIGN.md).
+`WebClientTransportProbeTest` chạy HTTP loopback thật bằng JDK HttpServer (port ngẫu nhiên),
+không cần dependency mới; đây là probe thư viện, chưa phải kiểm thử runner production.
+
+`WebClientHttpRunner` hiện có API reactive `execute(ResolvedHttpRequest, Duration)`:
+không gửi trước subscribe, mỗi subscription là một request, không block trong runner.
+Test loopback qua runner đã kiểm chứng GET/status/headers/body UTF-8, latency tới khi đọc xong body,
+timeout trước headers và trong body. Không retry/redirect tự động; response cap 1 MiB,
+không custom Host/Content-Length/Transfer-Encoding. Chưa đăng ký Spring bean hoặc nối job/listener.
+`WebClientRequestWireTest` đã kiểm chứng request bytes JSON (kể cả string/null/absent/negative),
+GET/POST/PUT/PATCH/DELETE/OPTIONS với body, HEAD không body, headers khác casing/nhiều giá trị,
+và builder -> runner giữ raw encoded URI/query/dot segments trên loopback.
+`WebClientResponseWireTest` kiểm chứng status 2xx/3xx/4xx/5xx không biến thành lỗi assertion,
+empty/HEAD/204, redirect không follow, charset/fallback và biên giới hạn bytes.
+Constructor `(ObjectMapper, int maxResponseBytes)` cho response cap dương (mặc định 1 MiB).
+Bytes text lỗi/charset không hợp lệ báo decoding error, không thay bytes âm thầm; vẫn giữ status/headers.
+Body là text view, không hỗ trợ binary/gzip decoding tự động.
+`WebClientLifecycleWireTest` thêm 7 tests TCP loopback: refused/đóng kết nối, deadline chunks,
+cancellation đóng socket và subscription isolation. Thêm 2 logging policy tests; toàn worker `clean test`: 164 tests pass.
+`application.yml` mặc định tắt logger Netty/Spring reactive HTTP client vì exception có thể chứa raw header/URL.
+Đây là suppression (mất diagnostic logs), không phải redaction; runner được nhúng ngoài Boot cần policy tương đương.
+Không override bật wiretap/HTTP DEBUG hoặc log DTO với secrets thật. DTO giữ nguyên dữ liệu phục vụ assertion;
+redaction khi lưu/log còn ở E1. Unit tests không tự nạp Boot config nên vẫn có WARN và marker giả của positive control.
+Chưa kiểm chứng DNS/TLS/proxy/load/SSRF hoặc production security; không retry và chưa Spring bean wiring.
 
 ## Chạy test
 
@@ -59,8 +83,8 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
 - Body/query dùng Jackson `JsonNode` chuẩn từ JSON parser: constructor và accessor đều copy sâu object/array, tránh sửa template qua tham chiếu bên ngoài. Accessor trả bản sao có thể sửa, không phải view vào model. Không cam kết ownership cho custom JsonNode/POJONode bọc Java object tùy ý.
 - Java `null` body là không có body; `NullNode` là JSON `null`. Khi serialize template, body vắng mặt được bỏ qua, JSON `null` vẫn xuất hiện. Không thêm field contract.
 - Map thiếu hoặc null trở thành map rỗng. Java null key/value/list element bị từ chối với tên trường, không đưa giá trị đầu vào vào lỗi; JSON null trong query vẫn được giữ dưới dạng NullNode.
-- `ResolvedHttpRequest` yêu cầu method và URI HTTP(S) có host, không credentials/fragment/port không hợp lệ. Chưa validation cú pháp header/token method đầy đủ; ranh giới gửi HTTP sẽ xử lý ở B3. Không tự thêm Content-Type/Authorization hoặc sửa payload negative test.
-- `HttpResponseData`: response hoàn chỉnh có status 3 chữ số, body String (rỗng nếu không có bytes), error null; lỗi transport có status/body null, headers rỗng và error không rỗng; lỗi đọc response giữ status/headers đã nhận, body null hoặc phần đã đọc và error không rỗng. Latency không âm. Đây là semantics model, chưa có runner chứng minh hành vi trên wire.
+- `ResolvedHttpRequest` yêu cầu method và URI HTTP(S) có host, không credentials/fragment/port không hợp lệ. Runner kiểm tra token method/header, control characters và từ chối custom authority/framing headers trước khi gửi. Không tự thêm Content-Type/Authorization hoặc sửa payload negative test.
+- `HttpResponseData`: response hoàn chỉnh có status 3 chữ số, body String (rỗng nếu không có bytes), error null; lỗi transport có status/body null, headers rỗng và error không rỗng; lỗi đọc response giữ status/headers đã nhận. Model cho phép body partial nhưng runner hiện luôn trả body null khi đọc/decode/limit lỗi, không trả partial text. Latency không âm; hành vi runner đã kiểm chứng qua loopback tests.
 
 Model chỉ validation cấu trúc nội bộ nêu trên, không kiểm tra business/schema payload, interpolation, URI encoding hoặc gửi HTTP.
 Test model/fixture hiện chạy độc lập với PostgreSQL và RabbitMQ.
