@@ -23,11 +23,18 @@ Tài liệu này là bộ nhớ bàn giao trong repository, không phải cam k�
 
 ## 3. Hiện trạng đã xác nhận
 
+- **Ưu tiên hiện tại theo yêu cầu mới: nghiệm thu A–C trước khi tiếp tục D.** Runtime cũ giữ nguyên, không phát triển thêm. Kết quả mới nhất: **565 tests pass**, 0 failures/errors/skips (parent + worker clean test); 533 tests ngoài runtime, 32 runtime cũ. Snapshot JSON có kiểm tra trước deepCopy, schema response có budget, shared engine có concurrent probe. Xem FOUNDATION_ACCEPTANCE.md; các số phía dưới là lịch sử, không phải tiến độ mới nhất.
+
 - Nhánh: `vinh`; A1/A2/B1/B2 và rà soát R1–R3 đã hoàn thành ở phạm vi ghi dưới đây.
 - Baseline sau R2: 92 tests pass; R3 thêm 5 probes, B3.1 thêm 7 runner tests, B3.2 thêm 24 request wire tests, B3.3 thêm 27 response wire tests, B4.1 thêm 7 lifecycle tests, B4.2 thêm 2 logging policy tests. Tổng 164 tests pass (parent + worker clean test).
-- Hoàn thành mốc B trong phạm vi local HTTP và suppression transport logs; chưa assertion, interpolation, persistence hoặc listener. Test application không chứng minh ứng dụng khởi động được hoặc production security.
+- Hoàn thành mốc B trong phạm vi local HTTP và suppression transport logs; C1 thêm 35 tests model/evaluator STATUS_CODE, C2 thêm 42 tests RESPONSE_TIME/LESS_THAN. Tổng 241 tests pass (parent + worker clean test), 0 failure/error/skip. Chưa assertion engine tổng hợp, interpolation, persistence hoặc listener. Test application không chứng minh ứng dụng khởi động được hoặc production security.
 - Java 21; Maven portable 3.9.9 ngoài repository, xem lệnh chạy ở README.
-- R2 đã commit/push ở abac3a2. Lượt R3 hiện chưa commit; kiểm tra git status thực tế khi tiếp tục.
+- Cập nhật C3.1: 61 tests JSON_PATH EQUALS/NOT_NULL pass; C2 gom test biên kiểu dữ liệu có tên rõ (42 -> 39 invocations, giữ scenario). Tổng mới nhất **299 tests pass**, 0 failure/error/skip (parent + worker clean test). C3.2 CONTAINS/GREATER_THAN còn mở.
+- C3.2 đã thêm 50 comparison tests; JSONPath 111 tests pass, parent + worker clean test mới nhất **349 tests pass**, 0 failure/error/skip. C3 hoàn thành definite-selector scope với bốn operator. C4/C5/C6 chưa hoàn thành, không tuyên bố toàn engine xong.
+- C1–C6 hoàn thành trong phạm vi tài liệu: C5 Draft 7 offline (93 tests), C6 5 evaluators + loopback runner integration (14 tests). Parent + worker clean test mới nhất **508 tests pass**, 0 failures/errors/skips. Chưa generator/backend/UI/RabbitMQ/persistence integration.
+- Review sau C6: thêm 10 schema regressions (schema tổng 103), sửa early structure budget và exponent allocation bound. Clean test mới nhất **518 pass**, 0 failures/errors/skips; 508 ở trên là baseline trước review. Ingress/model bounds và regex isolation vẫn mở; không coi evaluator budgets là sandbox.
+- Tiếp nối D1–D3: runtime/extraction/sequential orchestration đã có 32 tests, gồm HTTP Create/Get chain và subscription isolation. Parent + worker clean test hiện tại **550 pass**, 0 failures/errors/skips. 518 là baseline trước D. Wire TestResult/redaction, RabbitMQ/persistence và G vẫn mở.
+- R2 đã commit/push ở abac3a2; mốc B chia 5 commits f2c0ed8..07234db, chưa push. C1–C6/contract bổ sung chưa commit; kiểm tra git status thực tế khi tiếp tục.
 
 ## 4. Rà soát trước khi viết B3
 
@@ -85,12 +92,12 @@ Hoàn thành: ma trận request/response và phương án test được ghi lạ
 
 ### Assertions — C
 
-- [ ] Mỗi rule có expected/actual/message rõ; test PASS/FAIL và malformed rule. Không catch mọi exception rồi báo FAIL chung chung.
-- [ ] Status 400 expected/actual 400 là PASS; latency đúng toán tử và ngưỡng.
-- [ ] JSONPath so sánh kiểu/số/null/missing nhất quán; không coi thiếu path tương đương JSON null khi rule cần phân biệt.
-- [ ] Header không phân biệt hoa/thường, nhiều giá trị; contract HEADER chưa có payload đầy đủ nên cần chốt representation trước code.
-- [ ] Networknt dialect rõ, schema không hợp lệ tách response không hợp lệ; không nhận là hỗ trợ mọi schema OpenAPI 3.0/3.1.
-- [ ] Unsupported/empty rules có chính sách công khai; không âm thầm bỏ qua rule và kết luận PASS.
+- [x] Mỗi rule có expected/actual/message; test PASS/FAIL/malformed rule. Configuration/evaluation/execution errors không bị catch thành FAIL. JSON_SCHEMA chỉ trả summary valid/invalid, chưa chi tiết path/keyword.
+- [x] Status 400 expected/actual 400 là PASS; latency strict <, equality FAIL, thresholds trong long không âm.
+- [x] JSONPath definite selectors: so sánh kiểu/số/null/missing nhất quán, array index thiếu không tương đương JSON null; 111 tests.
+- [x] Header lookup case-insensitive, multi-value any-match; contract đã thêm headerName/semantics được người dùng cho phép. Result actual array raw, không comma split/join; 51 header tests pass.
+- [x] Networknt Draft 7 offline; schema cấu hình sai tách response vi phạm schema. Local acyclic JSON Pointer refs, depth <=64; không nhận là hỗ trợ mọi schema OpenAPI 3.0/3.1. 93 schema tests pass.
+- [x] Unsupported/null/duplicate rules là lỗi cấu hình; empty list explicit PASS chỉ khi response hoàn chỉnh. Engine có 14 tests gồm loopback runner -> cả 5 evaluators.
 
 ### Variables và chaining — D
 
@@ -125,8 +132,8 @@ Hoàn thành: ma trận request/response và phương án test được ghi lạ
 
 ## 6. Những quyết định chưa được tự ý coi là đã chốt
 
-- Query style/explode và HEADER rule representation chưa đầy đủ trong contract.
-- Extraction failure có ảnh hưởng status hay không; empty assertions; precedence biến và overwrite extraction.
+- Query style/explode chưa đầy đủ trong contract. HEADER representation đã chốt ở lượt C4 (headerName); tích hợp producer/UI còn chưa kiểm chứng.
+- Extraction failure có ảnh hưởng status hay không; precedence biến và overwrite extraction. Empty assertions đã chốt ở C6: explicit list rỗng không có assertion failure; execution error vẫn lỗi.
 - Unit thực thi/attempt/idempotency, redelivery và một nơi chịu trách nhiệm persist result.
 - Cách chứng minh các test độc lập để chạy song song; không suy diễn dependency graph.
 - Account/project permissions, lifecycle/cancel của backend nằm ngoài worker, cần phối hợp khi tích hợp.
@@ -144,5 +151,5 @@ Chi tiết nội bộ có thể tự chọn và ghi rationale. Nếu cần đổ
 ## 8. Bàn giao hiện tại và baseline lịch sử
 
 - Lượt lập kế hoạch ban đầu chỉ sửa tài liệu; sau đó R1–R3 và B3/B4 đã được triển khai/kiểm chứng như mục trạng thái ở trên.
-- Điểm bắt đầu tiếp theo: **C1 — assertion rule/result và STATUS_CODE** theo contract (expected 400/actual 400 phải pass). Mốc B đã kiểm chứng trên loopback; transport logs bị suppress theo Boot config, không có global redaction hoặc bảo đảm an toàn khi override logger/log DTO.
+- Điểm bắt đầu tiếp theo: **đối chiếu nghiệm thu A–C; chưa mở rộng D**. C5 Draft 7 offline chỉ local acyclic JSON Pointer refs, schema depth <=64; producer phải normalize OpenAPI, chưa sandbox/schema regex timeout. C6 engine nội bộ giữ đủ ordered PASS/FAIL, không trả partial summary khi error; mapping TestResult ERROR ở mốc sau. C4 headerName/multi-values, C3 definite selectors/missing-null/exact numeric giữ regression. Mốc B đã kiểm chứng loopback; suppression không phải redaction hoặc bảo đảm an toàn khi override logger/log DTO.
 - Mốc 57 test pass là baseline chức năng nhỏ, không phải bằng chứng toàn worker đã hoàn thiện.

@@ -1,6 +1,6 @@
 # Worker Service (Test Execution Engine)
 
-Module này là một service độc lập chịu trách nhiệm bởi **Member 2**:
+Module này thuộc **Member 2**, có trách nhiệm mục tiêu sau (không phải mọi mục đã được tích hợp):
 - Lắng nghe Message Queue từ RabbitMQ (`test.execution.queue`).
 - Thay thế các biến động (`{{token}}`, `{{userId}}`).
 - Gửi HTTP Request đến Target REST API.
@@ -24,7 +24,7 @@ worker/src/main/java/com/platform/worker/
 Theo dõi các đầu việc nhỏ, trạng thái kiểm thử và bàn giao trong [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 Tiêu chuẩn chất lượng, các điểm cần rà lại và hướng dẫn tiếp tục mỗi phiên nằm trong
-[REVIEW_PLAN.md](REVIEW_PLAN.md). Mốc B đã kiểm chứng trong phạm vi local HTTP; tiếp theo C1 — assertion models/result và STATUS_CODE.
+[REVIEW_PLAN.md](REVIEW_PLAN.md). Ưu tiên hiện tại là nghiệm thu A–C trước khi phát triển tiếp D; lõi D1–D3 từ lượt trước được giữ nguyên, chưa nối job pipeline.
 API runner và ma trận test nằm trong [HTTP_RUNNER_DESIGN.md](HTTP_RUNNER_DESIGN.md).
 `WebClientTransportProbeTest` chạy HTTP loopback thật bằng JDK HttpServer (port ngẫu nhiên),
 không cần dependency mới; đây là probe thư viện, chưa phải kiểm thử runner production.
@@ -52,6 +52,10 @@ Chưa kiểm chứng DNS/TLS/proxy/load/SSRF hoặc production security; không 
 
 ## Chạy test
 
+Ma trận nghiệm thu A–C, sơ đồ luồng, giới hạn và lệnh tái hiện: [FOUNDATION_ACCEPTANCE.md](FOUNDATION_ACCEPTANCE.md).
+
+Kết quả mới nhất sau gia cố A–C: **565 tests pass**, 0 failures/errors/skips (533 ngoài runtime + 32 runtime cũ). Các số 164/508/518/550 ở nhật ký phía dưới là baseline lịch sử. JSON model được kiểm tra trước defensive copy: tối đa 10.000 nodes, depth 256; từ chối Jackson non-JSON nodes và cây có chu kỳ. Schema response vượt structure budget là evaluation error, không schema FAIL. Chưa có ingress byte limits hoặc regex sandbox.
+
 Yêu cầu JDK 21 và Maven có trong PATH. Từ thư mục gốc repository:
 
 ```powershell
@@ -74,6 +78,52 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
 ```
 
 Đường dẫn JDK/Maven trên là cấu hình máy hiện tại, không phải yêu cầu đường dẫn cho máy khác.
+
+## Assertion C1 hiện có
+
+- `AssertionRule` dùng tên field theo TestCase contract, `AssertionResult` dùng `ruleId` theo TestResult contract; expected/actual giữ kiểu JSON và được copy sâu khi tạo/truy cập.
+- `StatusCodeAssertion.evaluate(rule, response)` kiểm tra bằng nhau; expected phải là JSON integer 100–999, không tự ép chuỗi/decimal. Expected 400/actual 400 PASS, expected 400/actual 500 FAIL.
+- Rule STATUS_CODE không có operator/jsonPath/expectedSchema. Rule khác chỉ được giữ cấu trúc trong model, chưa được evaluator này hỗ trợ; HEADER representation vẫn chưa chốt.
+- Response có execution error (kể cả đã có status) bị từ chối bằng IllegalStateException an toàn; orchestration phải quyết định ERROR trước khi gọi evaluator. Chưa có engine tổng hợp/TestResult lifecycle hoặc Spring wiring.
+- 35 tests C1; parent + worker `clean test` hiện có **199 tests pass**. Không coi boolean passed của một rule là trạng thái toàn TestResult.
+
+## Assertion C2 hiện có
+
+- `ResponseTimeAssertion.evaluate(rule, response)` dùng thời gian full-exchange runner đã đo theo milliseconds, không đo lại và không phụ thuộc clock trong evaluator.
+- Chỉ hỗ trợ operator `LESS_THAN` theo contract: actual < expected. Với expected 1500ms: 1499 PASS, 1500 FAIL, 1501 FAIL. Không có mặc định operator hoặc tự đổi thành <=.
+- Ngưỡng expected là JSON integer không âm trong miền long, không ép string/decimal; 0 hợp lệ nhưng không có thời gian không âm nào nhỏ hơn 0. Đây là chính sách validation C2; không thay đổi shared contract.
+- Execution error bị từ chối bằng IllegalStateException an toàn như C1, bất kể thời gian đã đo; HTTP 400/500 hoàn chỉnh vẫn kiểm tra latency bình thường. Chưa tổng hợp TestResult.ERROR.
+- 42 tests C2 xác định, không sleep; C1+C2+model 77 tests pass. Parent + worker `clean test`: **241 tests pass**, không failure/error/skip. Chưa engine/wiring; không thêm dependency.
+
+## Assertion C3 hiện có
+
+- `JsonPathAssertion` hỗ trợ EQUALS/NOT_NULL/CONTAINS/GREATER_THAN với root-based definite selectors (một giá trị), nested object/array, bracket notation và index âm. Chưa wildcard/filter/function; cấu hình không hỗ trợ bị từ chối, không âm thầm PASS.
+- EQUALS giữ kiểu JSON: 18 khác "18", nhưng số 18 bằng 18.0; object/array so sánh sâu, array giữ thứ tự. Response dùng exact decimal parsing, expected giữ JsonNode caller truyền vào.
+- Missing path/index FAIL, không coi là JSON null. EQUALS explicit null chỉ PASS khi tìm thấy JSON null thật; NOT_NULL FAIL với null/missing, nhưng PASS với false/0/empty string/array/object. Expected của NOT_NULL phải absent hoặc JSON null.
+- JSON lỗi/empty/trailing tokens/duplicate keys -> assertion FAIL an toàn; rule/path sai -> lỗi cấu hình, execution error -> từ chối đánh giá. Message không echo path/body; actual vẫn là dữ liệu raw, không phải đã redaction.
+- Jayway/Jackson có bước chuyển array index thiếu thành null; provider cục bộ kiểm tra index để ngăn false PASS. Không đổi Jayway global defaults, không thêm dependency/contract/engine wiring.
+- Sau chỉnh readability C2 (39 tests, giữ các scenario cũ) và thêm 61 tests C3.1: parent + worker `clean test` **299 tests pass**, không failure/error/skip. Các số test 199/241 phía trên là bằng chứng lịch sử từng mốc.
+- C3.2 CONTAINS: case-sensitive literal substring với string; deep equality membership với array, không subset/key lookup/recursive search. Empty substring PASS, empty array không chứa phần tử nào; explicit null có thể match phần tử null. String expected phải là string nếu actual là string, không coercion.
+- C3.2 GREATER_THAN: strict numeric >, exact decimal, equal FAIL, không ép string/boolean. Expected phải finite JSON number (kể cả BigDecimal lớn hơn double range); actual sai kiểu FAIL. Cả hai operator cần expected, cấu hình thiếu/sai bị từ chối an toàn. Đây là semantics worker được công bố, không thay shared payload contract.
+- **C3 hoàn thành trong phạm vi trên**: JSONPath 111 tests pass (61 baseline + 50 comparison). Baseline tại lượt C3: parent + worker **349 tests pass**; kết quả mới nhất xem mục C5–C6 bên dưới.
+
+## Assertion C4 — HEADER
+
+- Contract bổ sung `headerName` riêng cho HEADER, được người dùng cho phép; không dùng ké jsonPath/expected. Các rule cũ không có field này vẫn round-trip như trước; constructor 7 arguments được giữ. Generator/backend/UI cần dùng cùng contract khi tích hợp; chưa có kiểm chứng end-to-end các module đó.
+- `HeaderAssertion` hỗ trợ EQUALS/CONTAINS (expected string, any-match), NOT_NULL (expected absent/null). HTTP field name là ASCII token, lookup không phân biệt casing; values case-sensitive, literal, không trim/comma split/join, kể cả Set-Cookie.
+- Có ít nhất một value match là PASS; NOT_NULL nhận empty string là có mặt. Missing hoặc list rỗng FAIL; actual luôn array strings (missing -> []). Thu thập tất cả key cùng tên khác casing; thứ tự giữa map entries không đảm bảo.
+- Cấu hình sai -> lỗi cấu hình, execution error -> từ chối đánh giá. Message không echo raw values; expected/actual chưa redaction. Không Spring wiring hoặc tổng hợp engine.
+- 51 header tests + 1 model compatibility test mới; focused assertions/model 237 pass. Baseline tại lượt C4: parent + worker **401 tests pass**; kết quả mới nhất xem mục C5–C6 bên dưới.
+
+## Assertion C5–C6 — JSON Schema và engine
+
+- `JsonSchemaAssertion`: Networknt 1.5.1 có sẵn, JSON Schema Draft 7 mặc định; chỉ URI canonical `http://json-schema.org/draft-07/schema#` nếu khai báo. Schema object/boolean kiểm tra bằng meta-schema bundled; schema sai/keyword lạ/dialect khác là lỗi cấu hình. OpenAPI nullable phải chuyển thành type union trước khi gửi.
+- Offline local JSON Pointer refs `#/...` (escaping ~0/~1), không cycle/$id/anchor/root #/percent-encoding; depth tối đa 64. External loader bị chặn kể cả HTTP/file/classpath; definitions chưa dùng vẫn được kiểm tra. Format assertions bật cho format thư viện nhận biết, format khác annotation. Chưa sandbox/time budget riêng cho regex/schema không tin cậy.
+- Strict JSON body: malformed/empty/duplicate-key/trailing-token FAIL; JSON null được validate. Canonicalize số chính xác cho const/enum nested và uniqueItems (18 = 18.0), không ép chuỗi. Result mô tả cố định, actual valid/invalid, message không raw diagnostic/body.
+- `AssertionEngine`: điều phối cả 5 loại, giữ input order và mọi PASS/FAIL; empty list explicit PASS, không suy ra HTTP 2xx. Null list/rule, id trống/trùng, type lạ hoặc rule sai là lỗi cấu hình; execution error/evaluation failure từ chối summary, không partial results. Summary nội bộ immutable, chưa TestResult DTO hoặc Spring wiring.
+- **93 schema + 14 engine tests mới**; có HTTP loopback thật -> runner -> đủ 5 evaluator. Parent + worker `clean test`: **508 pass**, 0 failures/errors/skips. Chưa commit/push. Mốc D variables/extraction/chaining và E/F persistence/RabbitMQ còn mở; chưa sản phẩm end-to-end.
+
+Review C1–C6 bổ sung 10 schema regression tests (tổng schema 103): decimal multipleOf, exact large bounds, nested uniqueItems, dependencies, invalid unused definitions và resource budgets. Evaluator chặn schema >10.000 JSON nodes/depth >256 trước recursive meta-validation/canonicalization, giữ schema/ref depth <=64; chặn mở rộng số integral quá 10.000 chữ số. Đây chưa phải budget ở tầng deserialize/model hoặc sandbox/time limit cho regex. Parent + worker clean test sau review: **518 pass**, 0 failures/errors/skips.
 
 ## Model HTTP hiện có
 
@@ -102,6 +152,17 @@ Test model/fixture hiện chạy độc lập với PostgreSQL và RabbitMQ.
 - Query trùng key với base URL được nối thêm, không ghi đè; null trong array bị bỏ qua, empty key được giữ.
 - Path parameter rỗng, `.`/`..` và static dot segments được giữ nguyên, không tự normalize để tránh sửa dữ liệu negative test. Percent trong tham số vẫn encode; `%2e` đầu vào trở thành `%252e`. Hành vi trên wire/client/server sẽ được kiểm chứng khi triển khai runner; builder không phải bộ chặn path traversal.
 - Query object/nested array chưa được hỗ trợ; builder báo lỗi thay vì đoán serialization. Đây không phải bộ serialization đầy đủ cho mọi style/explode của OpenAPI.
-- Thiếu path parameter, biến `{{...}}` chưa được thay hoặc URI không hợp lệ gây `IllegalArgumentException`. Runtime interpolation sẽ được triển khai ở D1, trước khi gọi builder.
+- Thiếu path parameter, biến `{{...}}` chưa được thay hoặc URI không hợp lệ gây `IllegalArgumentException`. Runtime interpolation D1 chạy trước khi gọi builder.
 
 Validation URI không thay thế chính sách chống SSRF/allowlist cho worker thực thi.
+
+## Runtime và chaining D1–D3
+
+`runtime/RuntimeContext`, `VariableResolver`, `ResponseExtractor` và `SequentialExecution` cung cấp lõi chạy tuần tự độc lập với broker. Tạo executor bằng `new SequentialExecution(runner::execute)` với `WebClientHttpRunner`; gọi `execute(baseUrl, variables, steps, timeout, stopOnFirstFailure)` trả `Mono<List<StepResult>>`. Mỗi subscription có context mới; snapshot input được giữ độc lập với caller.
+
+- Resolve baseUrl/path/header/pathParams/query/body, giữ kiểu JSON khi toàn bộ giá trị là placeholder. Không resolve tên field hoặc method; không nội suy đệ quy giá trị biến.
+- Chạy theo orderIndex không trùng; assertion FAIL không extraction; extraction lỗi không cập nhật một phần context. Stop-on-failure đánh dấu phần còn lại SKIPPED.
+- Extraction BODY definite JSONPath hoặc HEADER `headerName` với đúng một raw value. Quy tắc chi tiết trong execution contract.
+- Kết quả D3 là dữ liệu nội bộ raw, **không được publish/lưu trực tiếp** trước redaction và mapping TestResult. Chưa tích hợp listener, retry/concurrency/cancel, persistence hay dependency graph.
+- Test HTTP loopback kiểm chứng Create → extract numeric ID → GET; unit tests kiểm tra biến thiếu, type preservation, malformed JSON, duplicate extraction, lỗi từng stage, stop/continue và isolation giữa các lần chạy.
+- Kiểm chứng sau D1–D3: parent + worker `clean test` **550 pass**, 0 failures/errors/skips; 32 test runtime mới. Số 518 ở review C là baseline lịch sử, không phải kết quả mới nhất.
