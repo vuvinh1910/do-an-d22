@@ -85,3 +85,20 @@ Tài liệu này định nghĩa cấu trúc dữ liệu của một **Job chạy
    * Trích xuất dữ liệu từ Response (Header/Body theo JSONPath) và cập nhật vào runtime context cho các step chạy sau trong cùng Job.
 5. **Publish/Save Results**:
    * Lưu kết quả vào DB hoặc đẩy về queue `test.result.queue`.
+
+## Quy tắc runtime tuần tự (worker D1–D3)
+
+- Context chỉ thuộc một lần chạy job. Bắt đầu từ snapshot `environment.variables`; extraction bước sau được ghi đè biến có cùng tên. Không chia sẻ giữa job hoặc giữa các lần subscribe/chạy lại.
+- Placeholder `{{name}}` dùng tên biến chính xác, không trim và không resolve đệ quy giá trị biến. Biến thiếu hoặc cú pháp placeholder hỏng là lỗi, không thay bằng chuỗi rỗng.
+- Resolve giá trị trong baseUrl/path, headers, pathParams, queryParams và body lồng nhau; không resolve method, tên header/query/property JSON. Body/query có giá trị string chỉ chứa đúng một placeholder thì giữ kiểu JSON của biến (kể cả object/array/null). Nội suy vào text chỉ nhận scalar khác null; object/array không tự stringify. URI builder vẫn kiểm tra/encode path/query sau resolve; query object/nested array chưa hỗ trợ.
+- Chạy tuần tự tăng dần theo `orderIndex`; yêu cầu id và orderIndex không trùng. `stopOnFirstFailure=true`: sau FAILED hoặc ERROR, các bước còn lại SKIPPED. Khi false, bước sau vẫn chạy; nếu cần biến chưa được tạo thì ERROR. Contract hiện chưa có dependency graph để tự suy ra SKIPPED theo dependency.
+- Chỉ extraction sau khi HTTP hoàn tất và tất cả assertion PASS. Cập nhật tất cả extraction của một bước nguyên tử; lỗi một extraction không cập nhật biến nào. Không extraction sau FAILED/ERROR.
+- BODY: `source: "BODY"`, `jsonPath` root-based definite selector; không function/wildcard/filter và không `headerName`. JSON null là giá trị có thật; path thiếu hoặc response JSON malformed/duplicate-key/trailing-token là lỗi.
+- HEADER: `source: "HEADER"`, `headerName` là HTTP ASCII field-name token, không `jsonPath`. So tên không phân biệt hoa/thường, giữ nguyên raw value; phải tìm đúng một giá trị (chuỗi rỗng hợp lệ). Thiếu hoặc nhiều giá trị là lỗi để tránh chọn tùy tiện; không split/join dấu phẩy. Ví dụ:
+
+```json
+{"variableName":"sessionToken","source":"HEADER","headerName":"X-Session-Token"}
+```
+
+- Trong cùng bước, `variableName` phải không rỗng và không trùng. `description` optional, không ảnh hưởng thực thi. Payload BODY cũ không thay đổi; HEADER producer phải dùng field `headerName` như trên.
+- Cấu hình/resolve/assertion/extraction không hoàn tất là ERROR nội bộ, không dựng assertion FAIL. D3 trả snapshot nội bộ chưa redaction; chưa phải wire TestResult hay chứng minh RabbitMQ/persistence integration.
