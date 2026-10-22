@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
-/** Internal D3 orchestration, not a RabbitMQ job consumer or wire TestResult producer. */
+/** Internal D3 orchestration, supporting both batch collection and real-time step streaming. */
 public final class SequentialExecution {
     private final BiFunction<ResolvedHttpRequest, Duration, Mono<HttpResponseData>> runner;
     private final VariableResolver resolver = new VariableResolver();
@@ -36,6 +36,14 @@ public final class SequentialExecution {
 
     public Mono<List<StepResult>> execute(String baseUrl, Map<String, JsonNode> variables,
                                          List<Step> steps, Duration timeout, boolean stopOnFirstFailure) {
+        return executeStream(baseUrl, variables, steps, timeout, stopOnFirstFailure)
+                .collectList()
+                .map(List::copyOf);
+    }
+
+    /** Stream step results in real-time as each HTTP exchange and assertion completes. */
+    public Flux<StepResult> executeStream(String baseUrl, Map<String, JsonNode> variables,
+                                          List<Step> steps, Duration timeout, boolean stopOnFirstFailure) {
         if (baseUrl == null || baseUrl.isBlank() || steps == null || timeout == null
                 || timeout.isZero() || timeout.isNegative()
                 || timeout.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0) {
@@ -52,8 +60,8 @@ public final class SequentialExecution {
             }
         }
         var ordered = snapshot.stream().sorted(Comparator.comparingInt(Step::orderIndex)).toList();
-        return Mono.defer(() -> {
-            // Construct a fresh context on every subscription, including repeated runs of this Mono.
+        return Flux.defer(() -> {
+            // Construct a fresh context on every subscription, including repeated runs of this Flux.
             var contextValues = new HashMap<String, JsonNode>();
             variableNames.forEach(key -> contextValues.put(key, initial.require(key)));
             var context = new RuntimeContext(contextValues);
@@ -68,7 +76,7 @@ public final class SequentialExecution {
                         stopped[0] = true;
                     }
                 });
-            }).collectList().map(List::copyOf);
+            });
         });
     }
 
