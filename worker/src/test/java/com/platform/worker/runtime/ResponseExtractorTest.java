@@ -23,6 +23,38 @@ class ResponseExtractorTest {
         assertEquals("a,b", result.get("token").textValue());
     }
 
+    @Test
+    void extractsMultipleBodyPropertiesFromSameResponseEfficiently() {
+        var rules = List.of(
+                body("userId", "$.user.id"),
+                body("userName", "$.user.name"),
+                body("roles", "$.user.roles"),
+                body("enabled", "$.user.enabled"),
+                body("total", "$.stats.total")
+        );
+        String body = """
+                {
+                  "user": {
+                    "id": "1001",
+                    "name": "Nguyen Van A",
+                    "roles": ["ADMIN", "USER"],
+                    "enabled": true
+                  },
+                  "stats": {
+                    "total": 99
+                  }
+                }
+                """;
+        var result = extractor.extract(rules, response(body));
+        assertEquals(5, result.size());
+        assertEquals("1001", result.get("userId").textValue());
+        assertEquals("Nguyen Van A", result.get("userName").textValue());
+        assertTrue(result.get("roles").isArray());
+        assertEquals(2, result.get("roles").size());
+        assertTrue(result.get("enabled").booleanValue());
+        assertEquals(99, result.get("total").intValue());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"$.missing", "$.a[1]", "$.a[-2]", "$.a[*]", "$.a.length()", "invalid"})
     void rejectsMissingIndefiniteAndFunctionPaths(String path) {

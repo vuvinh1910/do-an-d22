@@ -16,7 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Extraction is all-or-nothing; no secret input is included in diagnostics. */
+/** Extraction is all-or-nothing; parsed body is cached across multiple body rules in the same response. */
 public final class ResponseExtractor {
     private final ObjectMapper mapper = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
@@ -42,6 +42,7 @@ public final class ResponseExtractor {
             throw new IllegalStateException("Cannot extract after HTTP execution failure");
         }
         Map<String, JsonNode> values = new LinkedHashMap<>();
+        JsonNode parsedBody = null;
         for (var rule : rules) {
             if (rule == null || rule.variableName() == null || rule.variableName().isBlank()
                     || values.containsKey(rule.variableName())) {
@@ -58,11 +59,13 @@ public final class ResponseExtractor {
                     if (!path.isDefinite() || hasFunction(rule.jsonPath())) {
                         throw new IllegalArgumentException();
                     }
-                    JsonNode document = ModelSnapshots.json(mapper.readTree(response.body()));
-                    if (document == null) {
-                        throw new IllegalArgumentException();
+                    if (parsedBody == null) {
+                        parsedBody = ModelSnapshots.json(mapper.readTree(response.body()));
+                        if (parsedBody == null) {
+                            throw new IllegalArgumentException();
+                        }
                     }
-                    value = path.read(document, configuration);
+                    value = path.read(parsedBody, configuration);
                 } catch (Exception error) {
                     throw new IllegalArgumentException("BODY extraction could not resolve a definite JSON value");
                 }
