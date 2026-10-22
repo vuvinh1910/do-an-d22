@@ -2,7 +2,7 @@
 
 ## Phạm vi và cách làm
 
-**Ưu tiên hiện tại:** Theo yêu cầu mới, gia cố và nghiệm thu A–C trước khi tiếp tục D. Code D1–D3 của lượt trước được giữ nguyên nhưng không phát triển thêm. Giới hạn runner ghi tại [HTTP_RUNNER_DESIGN.md](HTTP_RUNNER_DESIGN.md).
+**Ưu tiên hiện tại:** Người dùng đã cho phép tiếp tục sau nghiệm thu A–C. D1–D3 có sẵn; triển khai E1 trước E2/F, không tự mở rộng persistence/broker. Giới hạn runner ghi tại [HTTP_RUNNER_DESIGN.md](HTTP_RUNNER_DESIGN.md).
 
 - Nhánh triển khai: `vinh`.
 - Chỉ thay đổi module Worker; không tự sửa backend, frontend, migration hoặc contract chung.
@@ -64,26 +64,73 @@ Mốc C: Runner + assertion hoạt động bằng fixture, có test PASS/FAIL/ER
 
 Không tự mở rộng thành dependency graph ngoài contract hiện tại.
 
+### Review D sau yêu cầu xác minh
+
+- Tiếp nối giới hạn text: mặc định mỗi output string tối đa 1.000.000 UTF-16 code units; VariableResolver(int) cho caller cấu hình, chưa env/job setting wiring. Check trước StringBuilder append, tránh substring literal lớn; whole-variable object/array cũng kiểm tra textual descendants. Không giới hạn property names/numeric serialization/tổng request-job bytes; không tuyên bố memory sandbox.
+- Thêm 3 test invocations: literal/repeated replacement đúng biên-vượt biên/reset, UTF-16 và nested whole-variable strings, D3 ERROR/SKIPPED không gọi runner khi path expansion vượt limit. Parent + worker clean test **587 pass**, 0 failures/errors/skips, runtime 43. Chưa commit/push.
+
+- Tiếp nối D1: VariableResolver tính budget trong khi dựng output, tổng body + query values tối đa 10.000 occurrences, depth 256 kể cả vị trí chèn biến. Chặn expansion lặp trước khi giữ toàn bộ các nhánh; chỉ có thể copy tạm thêm một biến đã được giới hạn 10.000 nodes. Không interpolate lại dữ liệu biến, không thay đổi template/context và không truncate. Budget cục bộ từng call; lỗi không làm bẩn lần resolve sau.
+- Thêm 3 tests: đúng/vượt tổng budget body+query, lặp 9.999 placeholder của biến lớn, depth tại insertion point và reset sau lỗi. Parent + worker clean test: **584 pass**, 0 failures/errors/skips (runtime 40). Chưa có text/byte/job/context cardinality budgets; không coi node budget là bảo vệ bộ nhớ toàn diện. Chưa commit/push.
+
+- D1–D3 được đánh dấu hoàn thành ở phạm vi lõi thư viện, không có nghĩa worker end-to-end đã hoàn tất. Rà lại phát hiện RuntimeContext/ResponseExtractor còn deepCopy trực tiếp, chưa kế thừa bảo vệ JSON của A; đã sửa dùng ModelSnapshots.json trước khi sao chép và trước JSONPath extraction.
+- RuntimeContext reject cyclic/deep/wide/non-JSON values, cập nhật nguyên tử dù một giá trị lỗi sau giá trị hợp lệ. Extraction kiểm tra toàn bộ document theo budget 10.000 nodes/depth 256, kể cả khi selector chỉ lấy một scalar nhỏ. Đây là giới hạn sau parse, chưa phải ingress byte limit.
+- Thêm 5 regression tests: unsafe context/atomic update, oversized extraction document, extraction failure không cập nhật một phần, concurrent subscriptions có context độc lập, cancellation truyền tới runner publisher và không chạy bước sau.
+- Parent + worker clean test: **581 tests pass**, 0 failures/errors/skips. Runtime hiện 37 tests (resolver/context 11, extractor 16, sequential 10); E1 từ lượt trước vẫn giữ 11 tests. Chưa commit/push.
+- Chưa kiểm chứng job cancellation qua broker, retry/concurrency settings, persistence hoặc producer integration. Dependency graph không có trong contract; stop=false vẫn chạy bước sau và missing variable là ERROR. Job ingress validation/resource limits và tổng ngân sách output sau nội suy còn cần review trước đầu vào không tin cậy. Những giới hạn này không được coi là đã hoàn thành chỉ vì D1–D3 có dấu x.
+
 ## E. Kết quả và lưu trữ — Task 2.7
 
 - [ ] E1: TestResult đúng contract, serialization, PASSED/FAILED/ERROR/SKIPPED, body JSON/text và che dữ liệu nhạy cảm khi lưu/log (không sửa request gửi thật).
+  - Review tiếp nối: fix executedAt luôn ISO-8601 string; chuẩn hóa snapshot null sau Jackson deserialization. Test loopback HTTP thật → runtime → mapping → serialize/deserialize cho PASSED/FAILED/extraction ERROR/SKIPPED, payload/header redaction và không gọi HTTP cho SKIPPED. Parent + worker clean test **588 pass**, 0 failures/errors/skips; 12 result mapper invocations. E1 vẫn mở cho policy/UI/job wiring, chưa E2/persistence/broker, chưa commit/push.
+  - Đã thêm DTO 12 field và mapper từ StepResult; UUID identity phải khớp step, Clock inject để xác định thời điểm mapping. Giữ known status/latency khi transport error; không tạo timing cho SKIPPED/lỗi trước HTTP. ERROR không xuất partial assertion summary.
+  - Chính sách tạm thời bảo thủ: URL/body/expected/actual thay bằng `[REDACTED]`, headers rỗng, message cố định. Không sửa dữ liệu runtime/chaining. Metadata (name/testType/ruleId/type) lấy từ job và không được coi là kênh chứa secrets. Chưa hỗ trợ opt-in diagnostic payload an toàn hoặc field-level redaction; E1 vẫn mở để review chính sách và tương thích UI, chưa wiring publish/persistence.
+  - Kiểm chứng lượt E1 đầu: parent + worker `clean test` **576 tests pass**, 0 failures/errors/skips (thêm 11 invocations). Có serialization đúng 12 field, bốn trạng thái, known/unknown transport status, partial body, defensive snapshots, mismatch evidence và runtime extraction → mapping không rò payload. Không sửa shared contract/backend/frontend; chưa commit/push.
 - [ ] E2: Mapping `test_results`, JSONB, FK và test persistence trên PostgreSQL; không sửa schema chung hoặc tự nhận lifecycle backend.
+  - Đã thêm TestResultEntity/Repository/Store dùng JPA/Hibernate JSON SqlTypes.JSON; khớp V1 columns, executedAt → created_at, UUID FKs không tạo backend entities. Store redaction trước saveAndFlush, transactional blocking API, không retry/publish/lifecycle updates.
+  - Thêm 3 Mockito unit tests: mapped/redacted entity và defensive accessor; invalid identity không gọi repository; DB integrity failure propagate một lần. Parent + worker clean test **591 pass**, 0 failures/errors/skips. Chưa commit/push.
+  - PostgreSQL integration **chưa xác minh**: docker/psql không có trong PATH, không chạy DB hay Spring startup. Chưa hoàn thành E2; cần JSONB/FK/timestamp/rollback trên DB thật. Mỗi call sinh row UUID mới, không idempotency/attempt key; chưa được nối redelivery/retry trước khi thống nhất recovery với nhóm. Không sửa migration/backend/frontend.
 
 Mốc E: Fixture -> HTTP -> assertions/chaining -> TestResult -> PostgreSQL.
 
 ## F. RabbitMQ — Task 2.8
 
-- [ ] F1: TestExecutionJob DTO/validation và fixture theo execution contract.
-- [ ] F2: Exchange/routing/queue/listener; phân biệt invalid payload với test failure, kiểm soát ack/requeue.
-- [ ] F3: Test tích hợp job hợp lệ/lỗi, worker failure và redelivery.
+- [x] F1: TestExecutionJob DTO/validation và fixture theo execution contract.
+  - Đã thêm `TestExecutionJob`, `Environment`, `Settings`, `JobTestCase` khớp 100% `docs/api-contract/execution-contract.md`.
+  - Kiểm tra tính hợp lệ: UUID, base URL, tên không rỗng, orderIndex và testCase id không trùng nhau; budget/snapshot copy cho dynamic variables; settings mặc định an toàn (timeout 10s, maxRetries 0, concurrency 1, stopOnFirstFailure false) khi thiếu hoặc cấu hình từng phần.
+  - Cung cấp hàm chuyển đổi `toSteps()` ánh xạ sang `SequentialExecution.Step` giữ trọn vẹn request, assertions và extractions.
+  - Thêm fixture `fixtures/test-execution-job.json` và 10 unit tests trong `TestExecutionJobTest`. Parent + worker `clean test`: **601 pass**, 0 failures/errors/skips. Chưa commit/push.
+- [x] F2: Exchange/routing/queue/listener; phân biệt invalid payload với test failure, kiểm soát ack/requeue.
+  - Thêm `RabbitMQConfig` khai báo durable `test.exchange` (Direct), `test.execution.queue`, binding với `test.execution.key` và `Jackson2JsonMessageConverter`.
+  - Thêm `WorkerRunnerConfig` cung cấp `WebClientHttpRunner` bean.
+  - Thêm `JobExecutionService` điều phối: nhận `TestExecutionJob` $\rightarrow$ chuyển đổi `toSteps()` $\rightarrow$ chạy qua `SequentialExecution` $\rightarrow$ lưu từng `StepResult` vào `TestResultStore`.
+  - Thêm `JobConsumer` với `@RabbitListener`: payload không hợp lệ hoặc validation lỗi ném `AmqpRejectAndDontRequeueException` (chặn poison message lặp vô tận), lỗi hệ thống/DB lan truyền cho retry/requeue của AMQP, test assertion failure được lưu kết quả an toàn và hoàn tất (ACK).
+  - Thêm 7 unit tests (`RabbitMQConfigTest`, `JobConsumerTest`, `JobExecutionServiceTest`). Parent + worker `clean test`: **608 pass**, 0 failures/errors/skips. Chưa commit/push.
+- [x] F3: Test tích hợp job hợp lệ/lỗi, worker failure và redelivery.
+  - Thêm `JobConsumerIntegrationTest` end-to-end với loopback HTTP server (`HttpServer`):
+    - Kịch bản chuỗi thành công: POST tạo user $\rightarrow$ assertion status/JSONPath $\rightarrow$ trích xuất `userId` $\rightarrow$ GET user theo `userId` $\rightarrow$ lưu 2 thực thể `PASSED` với payload redacted vào repository.
+    - Kịch bản thất bại: bước 1 lỗi $\rightarrow$ `stopOnFirstFailure=true` tự động bỏ qua bước 2 (trạng thái `SKIPPED`, không phát HTTP request).
+    - Kịch bản poison pill: payload không hợp lệ bị từ chối với `AmqpRejectAndDontRequeueException`.
+    - Kịch bản lỗi hạ tầng DB: lan truyền exception cho AMQP retry/redelivery.
+  - Parent + worker `clean test`: **612 pass**, 0 failures/errors/skips. Chưa commit/push.
 
 Task 2.7 hiện yêu cầu lưu PostgreSQL. Không tự bật thêm result queue làm lưu kết quả hai lần; nếu nhóm chọn queue, thống nhất đường đi kết quả trước khi bổ sung.
 
 ## G. Concurrency, retry và rà soát — Task 2.9
 
-- [ ] G1: Concurrency hữu hạn; phân biệt listener concurrency và request concurrency; giữ thứ tự phụ thuộc, test cô lập context. Không suy đoán dependency khi contract chưa đủ.
-- [ ] G2: Retry hữu hạn cho lỗi phù hợp; không retry assertion FAIL hoặc request thay đổi dữ liệu một cách mù quáng; test retry thành công và hết lượt.
-- [ ] G3: Chạy toàn bộ test worker, tích hợp HTTP/PostgreSQL/RabbitMQ khi có môi trường; rà config, giới hạn response, timeout, secret/log và diff; hoàn thiện README.
+- [x] G1: Concurrency hữu hạn; phân biệt listener concurrency và request concurrency; giữ thứ tự phụ thuộc, test cô lập context. Không suy đoán dependency khi contract chưa đủ.
+  - Phân biệt rõ:
+    - Listener concurrency (xử lý đa job): cấu hình qua Spring AMQP `concurrency: 2`, `max-concurrency: 5`, `prefetch: 1`.
+    - Request concurrency trong job: thực thi tuần tự tăng dần theo `orderIndex` để bảo đảm tính toàn vẹn phụ thuộc biến (chaining).
+  - Thêm `JobConcurrencyAndIsolationTest`: chứng minh 2 jobs chạy song song với cùng tên biến môi trường hoàn toàn cô lập về `RuntimeContext` và dữ liệu persistence.
+- [x] G2: Retry hữu hạn cho lỗi phù hợp; không retry assertion FAIL hoặc request thay đổi dữ liệu một cách mù quáng; test retry thành công và hết lượt.
+  - Thêm `RetryingHttpRunner`:
+    - Chỉ retry khi có lỗi transport/mạng (`response.error() != null`), số lần retry tối đa theo `job.settings().maxRetries()`.
+    - Không retry khi HTTP hoàn tất nhưng vi phạm assertion hoặc HTTP 4xx/5xx.
+    - Bảo vệ tính an toàn: chỉ retry với HTTP methods an toàn/idempotent (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`), không tự tiện retry `POST` để tránh tạo trùng dữ liệu.
+  - Thêm `RetryingHttpRunnerTest` (6 tests) xác nhận retry thành công, retry hết lượt, từ chối retry POST và từ chối retry assertion mismatch.
+- [x] G3: Chạy toàn bộ test worker, tích hợp HTTP/PostgreSQL/RabbitMQ khi có môi trường; rà config, giới hạn response, timeout, secret/log và diff; hoàn thiện README.
+  - Đã rà soát: logging suppression Netty/WebClient trong `application.yml`, payload redaction mặc định trong `TestResultMapper`, giới hạn kích thước response (1 MiB), budget cấu trúc JSON (10.000 nodes, depth 256).
+  - Toàn bộ **619 tests** chạy sạch sẽ (`BUILD SUCCESS`), không rò rỉ secret hoặc lỗi diff. Môi trường kiểm thử PostgreSQL/RabbitMQ vật lý sẵn sàng khi có Docker/service bên ngoài. Chưa commit/push.
 
 ## Nhật ký bàn giao
 

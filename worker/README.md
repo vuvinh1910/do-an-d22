@@ -1,5 +1,70 @@
 # Worker Service (Test Execution Engine)
 
+## G — Concurrency, Retry Policy & Production Review
+
+Đã hoàn thiện các cơ chế đồng thời, retry an toàn và rà soát chất lượng toàn diện:
+- **Concurrency & Context Isolation (G1)**:
+  - Phân biệt rõ Listener Concurrency (xử lý nhiều job cùng lúc qua Spring AMQP worker pool) và Request Concurrency trong từng job (chạy tuần tự theo `orderIndex` để bảo đảm tính toàn vẹn phụ thuộc biến).
+  - Kiểm chứng qua `JobConcurrencyAndIsolationTest`: các job chạy đồng thời trên nhiều luồng khác nhau với các biến cùng tên (`auth_token`) hoàn toàn độc lập, không rò rỉ context hoặc race condition.
+- **Retry Policy An Toàn (G2)**:
+  - Thêm `runner/RetryingHttpRunner`: chỉ tự động retry tối đa `maxRetries` khi xảy ra lỗi transport/mạng thực sự (`response.error() != null`).
+  - Tuyệt đối không retry khi assertion FAIL (HTTP 4xx/5xx nhận đầy đủ response).
+  - Bảo vệ phương thức: chỉ retry các HTTP method an toàn/idempotent (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`), chặn retry tự động với `POST` để tránh sinh trùng dữ liệu.
+- **Rà soát toàn diện (G3)**:
+  - Toàn bộ **619 tests pass**, 0 failures, 0 errors, 0 skipped.
+  - Mã nguồn tuân thủ nguyên tắc không hardcode credentials, che dấu payload nhạy cảm khi lưu (`[REDACTED]`), ngăn chặn exception dội dữ liệu nhạy cảm ra log, và kiểm soát ngân sách bộ nhớ JSON (10.000 nodes, depth 256).
+
+## F3 — End-to-end Consumer Integration Test
+
+Đã thêm bộ test tích hợp end-to-end `consumer/JobConsumerIntegrationTest` sử dụng máy chủ HTTP loopback cục bộ (`HttpServer`):
+- Chuỗi thực thi thực tế: Gửi HTTP POST tạo user $\rightarrow$ so khớp status & JSONPath $\rightarrow$ trích xuất `userId` $\rightarrow$ thế biến gọi HTTP GET user chi tiết $\rightarrow$ lưu toàn bộ kết quả `TestResultEntity` an toàn đã qua redaction.
+- Xác nhận cơ chế `stopOnFirstFailure`: dừng ngay khi bước trước lỗi và tự động gán trạng thái `SKIPPED` cho các bước sau mà không phát HTTP request.
+- Xác nhận kiểm soát lỗi AMQP: ném `AmqpRejectAndDontRequeueException` khi gặp poison pill; lan truyền exception khi gặp lỗi cơ sở dữ liệu để phục vụ retry/requeue.
+- Kiểm chứng mới nhất: **612 tests pass**, 0 failures/errors/skips.
+
+## F2 — RabbitMQ Consumer & Job Execution Service
+
+Đã tích hợp RabbitMQ consumer và pipeline xử lý job:
+- `config/RabbitMQConfig`: Khai báo queue `test.execution.queue`, direct exchange `test.exchange`, binding key `test.execution.key` và `Jackson2JsonMessageConverter`.
+- `config/WorkerRunnerConfig`: Đăng ký `WebClientHttpRunner` bean.
+- `service/JobExecutionService`: Nối `TestExecutionJob` $\rightarrow$ `SequentialExecution` $\rightarrow$ `TestResultStore` (lưu kết quả từng step).
+- `consumer/JobConsumer`: Lắng nghe message qua `@RabbitListener`; phân biệt lỗi cấu hình/payload không hợp lệ (ném `AmqpRejectAndDontRequeueException` để tránh poison pill lặp lại) và lỗi hạ tầng tạm thời (lan truyền để retry/requeue).
+- Kiểm chứng mới nhất: **608 tests pass**, 0 failures/errors/skips.
+
+## F1 — Job model và contract validation
+
+Đã thêm model `model/TestExecutionJob` gồm các records `Environment`, `Settings`, `JobTestCase` khớp 100% với `docs/api-contract/execution-contract.md`. DTO bảo đảm tính bất biến, sao chép phòng thủ biến động bằng `ModelSnapshots`, tự áp dụng cấu hình mặc định (timeout 10s, concurrency 1, maxRetries 0, stopOnFirstFailure false) và kiểm tra tính duy nhất của ID/orderIndex. Cung cấp adapter `toSteps()` để chuyển đổi trực tiếp sang `SequentialExecution.Step`. Fixture `test-execution-job.json` và 10 unit tests trong `TestExecutionJobTest` xác nhận tính toàn vẹn serialization/deserialization. Toàn worker: **601 tests pass**, 0 failures/errors/skips.
+
+## E2 — Persistence adapter (chưa nghiệm thu PostgreSQL)
+
+Đã thêm `persistence/TestResultEntity`, `TestResultRepository`, `TestResultStore` bằng Spring Data JPA/Hibernate hiện có, không thêm dependency hoặc sửa migration. Ánh xạ đúng các cột V1 `test_results`: UUID run/case, enum status dạng string, status/latency, ba JSONB snapshots/assertion_details, error_message, created_at. `executedAt` từ mapper được lưu vào `created_at`; schema không lưu name/testType riêng. FK do PostgreSQL kiểm soát, không tạo entity backend hay sửa counters/lifecycle test_runs.
+
+Store nhận raw StepResult và map redaction trước repository; saveAndFlush trong transaction, không publish queue, không retry hoặc swallow lỗi DB. Đây là API blocking: caller phải chạy ngoài WebClient event loop. Mỗi lần gọi dùng UUID row mới; schema chưa có execution/attempt unique key nên **không idempotent khi redelivery hoặc retry sau uncertain commit**. Chưa nối consumer/runtime tới store, chưa quyết định recovery/idempotency với nhóm.
+
+Kiểm chứng mới nhất: **591 tests pass**, 0 failures/errors/skips; 3 unit tests mới dùng Mockito repository, không phải PostgreSQL integration. Không tìm thấy docker/psql trong PATH ở môi trường hiện tại. E2 còn mở: cần chạy schema migration của backend trên PostgreSQL test riêng, kiểm tra Hibernate validate/JSONB/null/timestamptz/FK/rollback; chưa kiểm chứng startup context. Không dùng H2 để tuyên bố JSONB đã pass.
+
+## Trạng thái D sau review
+
+Mới nhất: **587 tests pass**, 0 failures/errors/skips (43 runtime). `VariableResolver` mặc định giới hạn mỗi output text value ở **1.000.000 UTF-16 code units**, có constructor nhận limit dương cho caller dùng riêng; SequentialExecution hiện dùng mặc định, chưa wiring setting/env. Kiểm tra literal/replacement trước append, áp dụng cả string trong object/array chèn nguyên biến. Không tính JSON property names, không giới hạn numeric serialization, không tính HTTP encoded bytes hoặc tổng số ký tự cả request/job. Scalar numeric `asText()` vẫn cấp phát trước kiểm tra; dữ liệu đầu vào vẫn đã tồn tại trước resolver. Vượt limit → ERROR trước HTTP; stop-on-first-failure → SKIPPED bước sau. Không log template/value trong lỗi.
+
+Cập nhật mới nhất: **584 tests pass**, 0 failures/errors/skips; runtime 40 tests. Resolver giới hạn output JSON ngay khi dựng cây: tổng 10.000 node occurrences cho body và tất cả query values trong một lần resolve, độ sâu tối đa 256 tại vị trí chèn biến. Query map/key không tính là JSON nodes; body Java null không tính node. Budget riêng mỗi call, không rò qua lỗi hoặc concurrent calls. Vượt giới hạn là configuration/resolve error (D3 mapping ERROR), không truncate payload. Một snapshot biến hợp lệ (tối đa 10.000 nodes) vẫn có thể được copy tạm trước kiểm tra budget còn lại; không giữ toàn bộ output vượt budget.
+
+Đây chưa phải memory/ingress budget toàn diện: chưa giới hạn số ký tự của scalar/text/URL/header, số biến/context hoặc tổng kích thước job. Các giới hạn node/depth không chứng minh chống OOM với dữ liệu không tin cậy.
+
+D1–D3 là **lõi runtime tuần tự**, chưa phải worker end-to-end. Đã review và đóng khoảng trống defensive copy: context và extraction dùng chung JSON snapshot validation (10.000 nodes/depth 256, reject non-JSON/cyclic trees). Extraction kiểm tra cả document trước JSONPath, nhưng chỉ sau deserialize, không thay thế ingress byte limits.
+
+Regression mới nhất: **581 tests pass**, 0 failures/errors/skips, trong đó 37 runtime tests. Có kiểm tra cập nhật nguyên tử, extraction failure không ghi đè một phần, concurrent subscription isolation và cancellation xuống publisher của runner. Chưa chứng minh cancellation qua broker, retry, cấu hình job concurrency, persistence hoặc tổng resource budget sau nội suy. Các mốc 565/576 phía dưới là lịch sử trước review này.
+
+## E1 — Result mapping (đang triển khai)
+
+Kiểm chứng E1 mới nhất: **588 tests pass** toàn worker, 0 failures/errors/skips; result mapper có 12 invocations. HTTP loopback thật → WebClient → runtime → mapper → JSON round-trip kiểm tra PASSED/FAILED/extraction ERROR/SKIPPED, redaction và số request không tăng cho bước skip. `executedAt` ép ISO-8601 string ngay cả khi mapper bật timestamp mặc định; snapshot vắng mặt chuẩn hóa JSON null/Java null để round-trip nhất quán. Đây chưa phải lưu PostgreSQL hoặc nhận job RabbitMQ, chưa chứng minh tương thích UI với chính sách ẩn toàn bộ payload.
+
+`TestResultMapper` chuyển `SequentialExecution.StepResult` thành DTO 12 field của result contract, giữ PASSED/FAILED/ERROR/SKIPPED và status/latency đã biết. `executedAt` là thời điểm mapping từ Clock được inject; caller cần map ngay khi step hoàn tất nếu cần timestamp sát thực thi.
+
+Chính sách mặc định hiện tại là **ẩn toàn bộ payload**, không phải field-level redaction: URL/body/expected/actual thành `[REDACTED]`, headers rỗng, message cố định. Áp dụng cả JSON/text/empty/partial body, không thay đổi request thật hoặc extraction context. Metadata name/testType/ruleId/type là dữ liệu job, không được đưa secrets vào các field này. DTO constructor không tự redaction; chỉ dùng mapper tại ranh giới output. Không log raw StepResult/request/response.
+
+Chưa wiring publisher/PostgreSQL; chưa có diagnostic payload opt-in cho UI. E1 còn mở cho review chính sách này trước tích hợp; E2/F chưa triển khai.
+
 Module này thuộc **Member 2**, có trách nhiệm mục tiêu sau (không phải mọi mục đã được tích hợp):
 - Lắng nghe Message Queue từ RabbitMQ (`test.execution.queue`).
 - Thay thế các biến động (`{{token}}`, `{{userId}}`).
