@@ -1,6 +1,7 @@
 package com.platform.worker.runtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.platform.worker.model.ModelSnapshots;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -17,7 +18,7 @@ public final class RuntimeContext {
         if (!values.containsKey(name)) {
             throw new IllegalArgumentException("Runtime variable is missing");
         }
-        return values.get(name).deepCopy();
+        return ModelSnapshots.json(values.get(name));
     }
 
     public void putAll(Map<String, JsonNode> additions) {
@@ -26,7 +27,7 @@ public final class RuntimeContext {
             throw new IllegalArgumentException("Runtime variables require non-blank names and JSON values");
         }
         Map<String, JsonNode> copies = new HashMap<>();
-        additions.forEach((key, value) -> copies.put(key, value.deepCopy()));
+        additions.forEach((key, value) -> copies.put(key, ModelSnapshots.json(value)));
         values.putAll(copies);
     }
 }

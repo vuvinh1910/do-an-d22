@@ -7,13 +7,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Package-local copying rules shared by HTTP models; never includes input values in errors. */
-final class ModelSnapshots {
+/** Copying rules shared by HTTP models and runtime; never includes input values in errors. */
+public final class ModelSnapshots {
 
     private ModelSnapshots() {
     }
 
-    static JsonNode json(JsonNode value) {
+    public static JsonNode json(JsonNode value) {
         validateJson(value);
         return value == null ? null : value.deepCopy();
     }

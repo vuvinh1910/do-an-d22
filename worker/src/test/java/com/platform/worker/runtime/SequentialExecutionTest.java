@@ -21,6 +21,25 @@ class SequentialExecutionTest {
     private final Duration timeout = Duration.ofSeconds(3);
 
     @Test
+    void excessiveTextExpansionBecomesErrorWithoutSendingHttpAndSkipsNext() {
+        var calls = new AtomicInteger();
+        var executor = new SequentialExecution((request, duration) -> {
+            calls.incrementAndGet();
+            return Mono.just(response(200, "{}"));
+        });
+        var first = new SequentialExecution.Step("a", 1, request("GET", "/{{v}}{{v}}"), List.of(), List.of());
+        var next = new SequentialExecution.Step("b", 2, request("GET", "/"), List.of(), List.of());
+        var context = Map.<String, com.fasterxml.jackson.databind.JsonNode>of("v",
+                mapper.getNodeFactory().textNode("x".repeat(500_000)));
+        var results = executor.execute("http://localhost", context, List.of(first, next), timeout, true).block(timeout);
+        assertNotNull(results);
+        assertEquals(SequentialExecution.Status.ERROR, results.get(0).status());
+        assertNull(results.get(0).request());
+        assertEquals(SequentialExecution.Status.SKIPPED, results.get(1).status());
+        assertEquals(0, calls.get());
+    }
+
+    @Test
     @Timeout(15)
     void realCreateGetChainOrdersStepsAndResolvesExtractedId() throws Exception {
         var calls = new java.util.concurrent.CopyOnWriteArrayList<String>();
@@ -138,6 +157,60 @@ class SequentialExecutionTest {
     private AssertionRule status(int expected) throws Exception {
         return new AssertionRule("status", "STATUS_CODE", mapper.readTree(Integer.toString(expected)),
                 null, null, null, null);
+    }
+
+    @Test
+    void failedExtractionDoesNotPartiallyOverwriteExistingVariable() throws Exception {
+        var executor = new SequentialExecution((request, duration) -> Mono.just(response(200, "{\"id\":99}")));
+        var first = new SequentialExecution.Step("a", 1, request("GET", "/"), List.of(),
+                List.of(new ExtractionRule("id", "BODY", "$.id", null, null),
+                        new ExtractionRule("missing", "BODY", "$.missing", null, null)));
+        var next = new SequentialExecution.Step("b", 2, request("GET", "/{{id}}"), List.of(), List.of());
+        var results = executor.execute("http://localhost", Map.of("id", mapper.readTree("1")),
+                List.of(first, next), timeout, false).block(timeout);
+        assertNotNull(results);
+        assertEquals(SequentialExecution.Status.ERROR, results.get(0).status());
+        assertEquals(SequentialExecution.Status.PASSED, results.get(1).status());
+        assertEquals("/1", results.get(1).request().uri().getPath());
+    }
+
+    @Test
+    void concurrentSubscriptionsHaveIndependentExtractionContexts() {
+        var calls = new AtomicInteger();
+        var executor = new SequentialExecution((request, duration) -> {
+            if (request.uri().getPath().equals("/create")) {
+                int id = calls.incrementAndGet();
+                return Mono.delay(Duration.ofMillis(20)).map(ignored -> response(200, "{\"id\":" + id + "}"));
+            }
+            return Mono.just(response(200, "{}"));
+        });
+        var create = new SequentialExecution.Step("a", 1, request("GET", "/create"), List.of(),
+                List.of(new ExtractionRule("id", "BODY", "$.id", null, null)));
+        var get = new SequentialExecution.Step("b", 2, request("GET", "/{{id}}"), List.of(), List.of());
+        var run = executor.execute("http://localhost", Map.of(), List.of(create, get), timeout, false);
+        var pair = Mono.zip(run, run).block(timeout);
+        assertNotNull(pair);
+        assertEquals("/1", pair.getT1().get(1).request().uri().getPath());
+        assertEquals("/2", pair.getT2().get(1).request().uri().getPath());
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void cancellationCancelsActiveRequestAndNeverStartsNextStep() {
+        var calls = new AtomicInteger();
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var executor = new SequentialExecution((request, duration) -> {
+            calls.incrementAndGet();
+            return Mono.<HttpResponseData>never().doOnCancel(() -> cancelled.set(true));
+        });
+        var first = new SequentialExecution.Step("a", 1, request("GET", "/"), List.of(), List.of());
+        var second = new SequentialExecution.Step("b", 2, request("GET", "/"), List.of(), List.of());
+        var subscription = executor.execute("http://localhost", Map.of(), List.of(first, second), timeout, false)
+                .subscribe();
+        assertEquals(1, calls.get());
+        subscription.dispose();
+        assertTrue(cancelled.get());
+        assertEquals(1, calls.get());
     }
 
     private TestCaseRequest request(String method, String path) {

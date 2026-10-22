@@ -77,6 +77,15 @@ class ResponseExtractorTest {
         return new ExtractionRule(name, "BODY", path, null, null);
     }
 
+    @Test
+    void rejectsOversizedDocumentEvenWhenSelectedValueIsSmall() {
+        String json = "{\"id\":1,\"data\":[" + "0,".repeat(9998) + "0]}";
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> extractor.extract(List.of(body("id", "$.id")), response(json)));
+        assertEquals("BODY extraction could not resolve a definite JSON value", error.getMessage());
+        assertNull(error.getCause());
+    }
+
     private HttpResponseData response(String body) {
         return new HttpResponseData(200, Map.of(), body, 1, null);
     }

@@ -15,6 +15,84 @@ class VariableResolverTest {
     private final VariableResolver resolver = new VariableResolver();
 
     @Test
+    void textLimitChecksLiteralReplacementAndRepeatedExpansionAtExactBoundary() {
+        var limited = new VariableResolver(4);
+        var context = new RuntimeContext(Map.of("v", mapper.getNodeFactory().textNode("ab")));
+        assertEquals("abcd", limited.text("abcd", context));
+        assertEquals("abab", limited.text("{{v}}{{v}}", context));
+        for (String text : java.util.List.of("abcde", "{{v}}{{v}}x", "x{{v}}{{v}}")) {
+            var error = assertThrows(IllegalArgumentException.class, () -> limited.text(text, context));
+            assertEquals("Resolved text exceeds character limit", error.getMessage());
+            assertNull(error.getCause());
+        }
+        assertEquals("ab", limited.text("{{v}}", context));
+        assertThrows(IllegalArgumentException.class, () -> new VariableResolver(0));
+    }
+
+    @Test
+    void textLimitCountsUtf16AndChecksStringsInsideWholeVariableObjects() {
+        var limited = new VariableResolver(4);
+        var context = new RuntimeContext(Map.of("v", mapper.createObjectNode().put("secret", "12345")));
+        var template = new TestCaseRequest("POST", "/", Map.of(), Map.of(), Map.of(),
+                mapper.getNodeFactory().textNode("{{v}}"));
+        assertThrows(IllegalArgumentException.class, () -> limited.resolve(template, context));
+        assertEquals("😀😀", limited.text("😀😀", context));
+        assertThrows(IllegalArgumentException.class, () -> limited.text("😀😀x", context));
+    }
+
+    @Test
+    void expandedOccurrencesShareBudgetAcrossBodyAndQueryAndAcceptExactBoundary() {
+        var array = mapper.createArrayNode();
+        for (int i = 0; i < 4999; i++) {
+            array.add(i);
+        }
+        var context = new RuntimeContext(Map.of("v", array));
+        var placeholder = mapper.getNodeFactory().textNode("{{v}}");
+        var exact = new TestCaseRequest("POST", "/", Map.of(), Map.of(), Map.of("q", placeholder), placeholder);
+        var resolved = resolver.resolve(exact, context);
+        assertEquals(4999, resolved.body().size());
+        assertEquals(4999, resolved.queryParams().get("q").size());
+        var over = new TestCaseRequest("POST", "/", Map.of(), Map.of(),
+                Map.of("q", placeholder), mapper.createArrayNode().add("{{v}}"));
+        var error = assertThrows(IllegalArgumentException.class, () -> resolver.resolve(over, context));
+        assertEquals("Resolved JSON exceeds structure limits", error.getMessage());
+        assertEquals("{{v}}", exact.body().asText());
+    }
+
+    @Test
+    void repeatedLargeVariableIsRejectedWithoutRetainingAllExpandedBranches() {
+        var array = mapper.createArrayNode();
+        for (int i = 0; i < 9998; i++) {
+            array.add(i);
+        }
+        var context = new RuntimeContext(Map.of("v", array));
+        var body = mapper.createArrayNode();
+        for (int i = 0; i < 9999; i++) {
+            body.add("{{v}}");
+        }
+        var template = new TestCaseRequest("POST", "/", Map.of(), Map.of(), Map.of(), body);
+        assertThrows(IllegalArgumentException.class, () -> resolver.resolve(template, context));
+        assertEquals(9998, context.require("v").size());
+    }
+
+    @Test
+    void expandedDepthIncludesInsertionPointAndBudgetResetsAfterFailure() {
+        var value = mapper.createArrayNode();
+        var cursor = value;
+        for (int i = 0; i < 255; i++) {
+            cursor = cursor.addArray();
+        }
+        var context = new RuntimeContext(Map.of("v", value));
+        var exact = new TestCaseRequest("POST", "/", Map.of(), Map.of(), Map.of(),
+                mapper.createArrayNode().add("{{v}}"));
+        assertNotNull(resolver.resolve(exact, context));
+        var over = new TestCaseRequest("POST", "/", Map.of(), Map.of(), Map.of(),
+                mapper.createArrayNode().add(mapper.createArrayNode().add("{{v}}")));
+        assertThrows(IllegalArgumentException.class, () -> resolver.resolve(over, context));
+        assertNotNull(resolver.resolve(exact, context));
+    }
+
+    @Test
     void resolvesNestedValuesPreservingTypesAndTemplate() throws Exception {
         var values = mapper.readTree("""
                 {"id":42,"flag":true,"obj":{"x":1},"arr":[1,2],"nil":null,"token":"secret"}
@@ -73,5 +151,31 @@ class VariableResolverTest {
     void rejectsNonScalarTextInterpolation(String json) throws Exception {
         var context = new RuntimeContext(Map.of("v", mapper.readTree(json)));
         assertThrows(IllegalArgumentException.class, () -> resolver.text("x{{v}}", context));
+    }
+
+    @Test
+    void contextRejectsUnsafeTreesAndUpdatesNothingOnValidationFailure() {
+        var nodes = mapper.getNodeFactory();
+        var cycle = nodes.arrayNode();
+        cycle.add(cycle);
+        var deep = nodes.arrayNode();
+        var cursor = deep;
+        for (int i = 0; i < 257; i++) {
+            cursor = cursor.addArray();
+        }
+        var wide = nodes.arrayNode();
+        for (int i = 0; i < 10000; i++) {
+            wide.add(i);
+        }
+        for (var invalid : java.util.List.of(cycle, deep, wide, nodes.pojoNode(new Object()),
+                nodes.binaryNode(new byte[]{1}), nodes.numberNode(Double.NaN), nodes.missingNode())) {
+            var context = new RuntimeContext(Map.of("v", nodes.numberNode(1)));
+            var additions = new java.util.LinkedHashMap<String, com.fasterxml.jackson.databind.JsonNode>();
+            additions.put("v", nodes.numberNode(2));
+            additions.put("bad", invalid);
+            assertThrows(IllegalArgumentException.class, () -> context.putAll(additions));
+            assertEquals(1, context.require("v").intValue());
+            assertThrows(IllegalArgumentException.class, () -> context.require("bad"));
+        }
     }
 }

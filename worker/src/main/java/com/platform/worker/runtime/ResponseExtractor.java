@@ -9,6 +9,7 @@ import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.spi.json.JacksonJsonNodeJsonProvider;
 import com.platform.worker.model.HttpResponseData;
+import com.platform.worker.model.ModelSnapshots;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -57,7 +58,7 @@ public final class ResponseExtractor {
                     if (!path.isDefinite() || hasFunction(rule.jsonPath())) {
                         throw new IllegalArgumentException();
                     }
-                    JsonNode document = mapper.readTree(response.body());
+                    JsonNode document = ModelSnapshots.json(mapper.readTree(response.body()));
                     if (document == null) {
                         throw new IllegalArgumentException();
                     }
@@ -86,7 +87,7 @@ public final class ResponseExtractor {
             if (value == null || value.isMissingNode()) {
                 throw new IllegalArgumentException("Extraction value is missing");
             }
-            values.put(rule.variableName(), value.deepCopy());
+            values.put(rule.variableName(), ModelSnapshots.json(value));
         }
         return Map.copyOf(values);
     }
