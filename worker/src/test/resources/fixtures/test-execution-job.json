@@ -1,0 +1,57 @@
+{
+  "jobId": "f78a1092-23bd-4601-831d-b8d0092fa112",
+  "testRunId": "b182cb22-c941-4556-9b88-518da06e0019",
+  "projectId": "73c6838a-ff99-4c12-9c12-3200df189021",
+  "environment": {
+    "id": "e9324a33-3112-4211-9a77-440182aa1234",
+    "name": "Staging",
+    "baseUrl": "https://api-staging.example.com",
+    "variables": {
+      "auth_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "companyId": "comp_9981"
+    }
+  },
+  "settings": {
+    "timeoutMs": 10000,
+    "maxRetries": 1,
+    "concurrency": 5,
+    "stopOnFirstFailure": false
+  },
+  "testCases": [
+    {
+      "id": "e4b17f8a-9821-4f7b-a2c9-d58611122334",
+      "operationId": "createUser",
+      "name": "Create user boundary test",
+      "testType": "BOUNDARY",
+      "orderIndex": 1,
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/users",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{auth_token}}"
+        },
+        "pathParams": {},
+        "queryParams": {},
+        "body": {
+          "username": "tester01",
+          "age": 18
+        }
+      },
+      "assertions": [
+        {
+          "id": "rule-1",
+          "type": "STATUS_CODE",
+          "expected": 201
+        }
+      ],
+      "extractions": [
+        {
+          "variableName": "createdUserId",
+          "source": "BODY",
+          "jsonPath": "$.id"
+        }
+      ]
+    }
+  ]
+}

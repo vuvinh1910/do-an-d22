@@ -1,6 +1,15 @@
 server:
   port: 8081
 
+# HTTP transport exceptions/debug messages may contain raw URLs, headers or payloads.
+# Suppression is intentional; do not override these levels with real credentials.
+logging:
+  level:
+    reactor.netty: "OFF"
+    io.netty: "OFF"
+    org.springframework.web.reactive.function.client: "OFF"
+    org.springframework.http.client.reactive: "OFF"
+
 spring:
   application:
     name: test-execution-worker

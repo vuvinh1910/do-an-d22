@@ -1,0 +1,155 @@
+# Kế hoạch rà soát chất lượng — Worker của Vinh (Người 2)
+
+## 1. Hướng dẫn tiếp tục ở mỗi phiên
+
+1. Đọc AGENTS.md tại gốc, tài liệu này và IMPLEMENTATION_PLAN.md trong worker.
+2. Kiểm tra nhánh `vinh`, working tree và thay đổi chưa commit; không ghi đè công việc đang có.
+3. Đọc lại contract/code/test liên quan đến mục đang làm trước khi sửa.
+4. Chọn một mục nhỏ dưới đây; nêu phạm vi và tiêu chí hoàn thành, rồi code + test + đọc lại diff.
+5. Cập nhật bằng chứng kiểm thử và bước tiếp theo; không gọi một mục hoàn thành chỉ vì đã tạo file.
+
+Tài liệu này là bộ nhớ bàn giao trong repository, không phải cam kết rằng AI nhớ vĩnh viễn giữa mọi phiên.
+
+## 2. Mục tiêu và giới hạn
+
+- Hoàn thiện rộng và sâu phần Người 2: HTTP, assertions, variables/extraction/chaining, kết quả, persistence, RabbitMQ, concurrency/retry.
+- Chỉ thay đổi worker; không tự sửa contract, schema, backend/UI hoặc tự bổ sung yêu cầu ngoài phân công.
+- Code rõ trách nhiệm, tên dễ hiểu, hàm vừa đủ nhỏ; chỉ tách abstraction khi có trách nhiệm riêng thực sự. Không tạo framework/plugin/event bus cho đẹp hình thức.
+- Giữ contract DTO tách model nội bộ, lỗi cấu hình tách lỗi transport, assertion FAIL tách test execution ERROR.
+- Không tự làm sạch/đổi dữ liệu negative test thành dữ liệu hợp lệ. Chỉ từ chối cấu hình không thể xử lý hoặc vi phạm chính sách an toàn được công bố.
+- Mỗi tính năng có happy path, boundary, failure, test tương tác khi cần, giới hạn rõ và ví dụ giải thích được khi bảo vệ.
+- Không dùng số test làm bằng chứng duy nhất; không tự tuyên bố production-ready, hỗ trợ toàn bộ OpenAPI hoặc bảo mật đầy đủ.
+- Chỉ commit khi người dùng yêu cầu; không tự push/merge; không thêm dependency nếu chưa kiểm tra stack, nhu cầu và tương thích.
+
+## 3. Hiện trạng đã xác nhận
+
+- **Ưu tiên hiện tại theo yêu cầu mới: nghiệm thu A–C trước khi tiếp tục D.** Runtime cũ giữ nguyên, không phát triển thêm. Kết quả mới nhất: **565 tests pass**, 0 failures/errors/skips (parent + worker clean test); 533 tests ngoài runtime, 32 runtime cũ. Snapshot JSON có kiểm tra trước deepCopy, schema response có budget, shared engine có concurrent probe. Xem FOUNDATION_ACCEPTANCE.md; các số phía dưới là lịch sử, không phải tiến độ mới nhất.
+
+- Nhánh: `vinh`; A1/A2/B1/B2 và rà soát R1–R3 đã hoàn thành ở phạm vi ghi dưới đây.
+- Baseline sau R2: 92 tests pass; R3 thêm 5 probes, B3.1 thêm 7 runner tests, B3.2 thêm 24 request wire tests, B3.3 thêm 27 response wire tests, B4.1 thêm 7 lifecycle tests, B4.2 thêm 2 logging policy tests. Tổng 164 tests pass (parent + worker clean test).
+- Hoàn thành mốc B trong phạm vi local HTTP và suppression transport logs; C1 thêm 35 tests model/evaluator STATUS_CODE, C2 thêm 42 tests RESPONSE_TIME/LESS_THAN. Tổng 241 tests pass (parent + worker clean test), 0 failure/error/skip. Chưa assertion engine tổng hợp, interpolation, persistence hoặc listener. Test application không chứng minh ứng dụng khởi động được hoặc production security.
+- Java 21; Maven portable 3.9.9 ngoài repository, xem lệnh chạy ở README.
+- Cập nhật C3.1: 61 tests JSON_PATH EQUALS/NOT_NULL pass; C2 gom test biên kiểu dữ liệu có tên rõ (42 -> 39 invocations, giữ scenario). Tổng mới nhất **299 tests pass**, 0 failure/error/skip (parent + worker clean test). C3.2 CONTAINS/GREATER_THAN còn mở.
+- C3.2 đã thêm 50 comparison tests; JSONPath 111 tests pass, parent + worker clean test mới nhất **349 tests pass**, 0 failure/error/skip. C3 hoàn thành definite-selector scope với bốn operator. C4/C5/C6 chưa hoàn thành, không tuyên bố toàn engine xong.
+- C1–C6 hoàn thành trong phạm vi tài liệu: C5 Draft 7 offline (93 tests), C6 5 evaluators + loopback runner integration (14 tests). Parent + worker clean test mới nhất **508 tests pass**, 0 failures/errors/skips. Chưa generator/backend/UI/RabbitMQ/persistence integration.
+- Review sau C6: thêm 10 schema regressions (schema tổng 103), sửa early structure budget và exponent allocation bound. Clean test mới nhất **518 pass**, 0 failures/errors/skips; 508 ở trên là baseline trước review. Ingress/model bounds và regex isolation vẫn mở; không coi evaluator budgets là sandbox.
+- Tiếp nối D1–D3: runtime/extraction/sequential orchestration đã có 32 tests, gồm HTTP Create/Get chain và subscription isolation. Parent + worker clean test hiện tại **550 pass**, 0 failures/errors/skips. 518 là baseline trước D. Wire TestResult/redaction, RabbitMQ/persistence và G vẫn mở.
+- R2 đã commit/push ở abac3a2; mốc B chia 5 commits f2c0ed8..07234db, chưa push. C1–C6/contract bổ sung chưa commit; kiểm tra git status thực tế khi tiếp tục.
+
+## 4. Rà soát trước khi viết B3
+
+### R1 — URI đúng ngữ nghĩa, không quá hạn chế (đã rà soát ở mức builder)
+
+Phát hiện ban đầu: `path.contains(":")` chặn path hợp lệ như `/users:search`. Đã sửa và có regression test.
+
+- [x] Viết regression test chứng minh lỗi, sau đó thay điều kiện blanket bằng kiểm tra scheme/authority phù hợp.
+- [x] Giữ chặn absolute URL/network-path và kiểm tra authority cuối không bị thay ngoài ý muốn.
+- [x] Rà base URL: scheme, host, IPv6, port, raw path/query, credentials/fragment, biến chưa resolve; không lộ credentials trong thông báo lỗi.
+- [x] Rà percent encoding: static path so với tham số raw, percent literal, Unicode, reserved characters, braces hỏng.
+- [x] Xác định hành vi empty path parameter, dot segments (static/tham số/encoded), path ghép từ nhiều placeholder. Không gắn nhãn chống traversal đầy đủ khi chưa kiểm chứng trên wire/server.
+- [x] Kiểm tra query key trùng base query, null trong array, boolean/number, empty key/value; ghi rõ quy tắc append/omit hiện có.
+- [x] Giữ giới hạn query serialization rõ: scalar/repeated-key array, chưa có style/explode/deepObject. Không đổi contract để hỗ trợ tùy tiện.
+- [x] Tách private methods validation/expansion/query nếu giúp đọc rõ; không chia quá nhiều class chỉ để giảm số dòng.
+
+Bằng chứng: regression chạy trước sửa có 3 failures và 7 errors; sau sửa `clean test` toàn worker có 74 tests pass (57 URI). Dot segments/giá trị rỗng được giữ để phục vụ negative test, không normalize; phải kiểm chứng hành vi wire ở B3, không coi đây là chính sách chặn traversal. Lỗi parse base URL không giữ message/cause chứa URL gốc. Tiếp theo: R2.
+
+Hoàn thành: regression tests có ý nghĩa, toàn bộ test worker pass, README phản ánh đúng hành vi và không tự nhận validation này là chống SSRF.
+
+### R2 — Model, ownership và lỗi đầu vào (sau R1, trước B3)
+
+- [x] Snapshot JsonNode chuẩn từ JSON parser ở constructor và accessor; regression mutate nested body/query. Không cam kết custom JsonNode/POJONode bọc object tùy ý.
+- [x] Null map thành rỗng; null entry/list element báo IllegalArgumentException có tên trường, không lộ dữ liệu. Absent body và explicit JSON null round-trip khác nhau.
+- [x] HttpResponseData phân biệt complete/transport/partial response; giữ thông tin đã nhận, không bịa status/body, latency không âm.
+- [x] Resolved request kiểm tra method có mặt và URI HTTP(S); header syntax/token method để ranh giới client B3. Không sửa negative payload, không tự thêm auth/content type.
+- [x] Fixture và round-trip pass; không thêm field wire contract.
+- [x] ModelSnapshots package-local chia sẻ copy/kiểm tra map cho ba model, không thêm dependency.
+
+Kết quả R2: 18 regression test mới; `clean test` tổng 92 tests pass, 0 failures/errors/skipped. Hành vi runner/wire vẫn chờ R3/B3.
+
+Hoàn thành: ownership và error semantics được ghi rõ, regression tests pass, model vẫn dễ dùng và không đổi wire contract.
+
+### R3 — Kế hoạch test HTTP và chốt thiết kế B3
+
+- [x] Chọn JDK HttpServer loopback/port ngẫu nhiên; không thêm dependency. Probe có teardown và timeout.
+- [x] Chọn API Mono<HttpResponseData>, không block trong runner, ghi ranh giới cấu hình/transport.
+- [x] Ghi quy tắc method/body/header/charset/HEAD/204 và giới hạn trong HTTP_RUNNER_DESIGN.md; cần chứng minh qua runner ở B3.
+- [x] Không redirect/retry implicit; probe xác nhận nhận 302 không gọi destination.
+- [x] Probe có timeout hữu hạn; thiết kế B3 có toàn-exchange deadline, B4 mở rộng phân loại lỗi.
+- [x] Probe ghi raw URI, request bytes/Content-Type và response thật; method/header coverage đầy đủ còn ở ma trận B3.
+
+Bằng chứng R3: WebClientTransportProbeTest 5 tests pass. Thiết kế và ma trận nằm trong HTTP_RUNNER_DESIGN.md, chưa có runner production.
+
+Hoàn thành: ma trận request/response và phương án test được ghi lại, sau đó mới triển khai B3 theo từng nhóm hành vi.
+
+## 5. Các cổng rà soát khi mở rộng (không code hết cùng lúc)
+
+### HTTP Runner và tài nguyên — B3/B4
+
+- [ ] Method GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS theo khả năng contract; body scalar/array/object/null/absent, query/headers đúng trên wire.
+- [ ] Giữ 2xx/3xx/4xx/5xx, text/JSON/rỗng; đo bằng monotonic clock đến khi body hoàn tất.
+- [ ] Timeout toàn request và lỗi connect/read được phân loại; giải phóng response/buffer, kết thúc server/executor test.
+- [ ] Giới hạn response và connection pool có cấu hình; không vô hiệu TLS validation để chạy demo.
+
+### Assertions — C
+
+- [x] Mỗi rule có expected/actual/message; test PASS/FAIL/malformed rule. Configuration/evaluation/execution errors không bị catch thành FAIL. JSON_SCHEMA chỉ trả summary valid/invalid, chưa chi tiết path/keyword.
+- [x] Status 400 expected/actual 400 là PASS; latency strict <, equality FAIL, thresholds trong long không âm.
+- [x] JSONPath definite selectors: so sánh kiểu/số/null/missing nhất quán, array index thiếu không tương đương JSON null; 111 tests.
+- [x] Header lookup case-insensitive, multi-value any-match; contract đã thêm headerName/semantics được người dùng cho phép. Result actual array raw, không comma split/join; 51 header tests pass.
+- [x] Networknt Draft 7 offline; schema cấu hình sai tách response vi phạm schema. Local acyclic JSON Pointer refs, depth <=64; không nhận là hỗ trợ mọi schema OpenAPI 3.0/3.1. 93 schema tests pass.
+- [x] Unsupported/null/duplicate rules là lỗi cấu hình; empty list explicit PASS chỉ khi response hoàn chỉnh. Engine có 14 tests gồm loopback runner -> cả 5 evaluators.
+
+### Variables và chaining — D
+
+- [ ] Substitution recursive giữ kiểu nếu toàn giá trị là biến, chuỗi ghép thì stringify theo quy tắc; missing variable không silently thành chuỗi rỗng.
+- [ ] Context riêng theo job/chain, không sửa environment/template; extraction có precedence/overwrite policy.
+- [ ] Test Create -> extract ID -> Get -> Delete; stop-on-first-failure/SKIPPED và bước lỗi vẫn có kết quả.
+- [ ] Không chạy song song bước phụ thuộc chỉ vì có concurrency; contract orderIndex chưa mô tả graph độc lập.
+
+### Kết quả, persistence và secret — E
+
+- [ ] PASSED/FAILED/ERROR/SKIPPED, timestamps/latency, assertion details đủ truy vết; không log credential/body nhạy cảm mặc định.
+- [ ] Redaction trên bản sao trước lưu/log; không sửa request thực gửi hoặc làm sai assertion/extraction.
+- [ ] Mapping JSONB/FK đúng migration; test với PostgreSQL thực khi có, không giả vờ H2 chứng minh JSONB.
+- [ ] Làm rõ xử lý idempotency/attempt trước khi kết hợp redelivery; không tự thay schema hoặc nhầm test-case ID với execution ID.
+- [ ] Không lưu DB và publish để backend lưu cùng kết quả hai lần; tuân thủ phương án tích hợp nhóm đã chốt.
+
+### RabbitMQ, concurrency, retry — F/G
+
+- [ ] Job validation, malformed payload, ack/requeue và lỗi lưu kết quả có đường xử lý rõ; không poison-message loop hoặc ack trước khi kết quả bền vững.
+- [ ] Chỉ nhận at-least-once khi chưa có cơ chế mạnh hơn; không tự nhận exactly-once.
+- [ ] Giới hạn in-flight jobs/requests, tách listener concurrency khỏi setting trong job, kiểm tra isolation và shutdown khi còn việc.
+- [ ] Retry hữu hạn, không retry assertion FAIL hoặc POST không an toàn một cách mù quáng; không cộng chồng retry client/broker mà không kiểm soát.
+- [ ] Kiểm tra tích hợp broker redelivery và persistence failure khi có hạ tầng; thiếu thì ghi BLOCKED.
+
+### An toàn và demo cuối
+
+- [ ] Chính sách target URL/SSRF cấu hình phù hợp demo nội bộ; không mặc định chặn mọi private IP hoặc cho phép toàn bộ địa chỉ mà không cảnh báo.
+- [ ] Kiểm soát redirect/DNS/credentials và tải schema bên ngoài theo khả năng thư viện; document giới hạn thay vì tuyên bố an toàn tuyệt đối.
+- [ ] Giới hạn số test, response, timeout/concurrency; lỗi cấu hình phải dễ hiểu.
+- [ ] README chạy được trên máy khác; fixture không chứa secret thật; demo tái hiện được PASS/FAIL/ERROR/SKIPPED và chaining.
+- [ ] Có bảng hỗ trợ/chưa hỗ trợ, sơ đồ luồng và giải thích các quyết định để bảo vệ đồ án.
+
+## 6. Những quyết định chưa được tự ý coi là đã chốt
+
+- Query style/explode chưa đầy đủ trong contract. HEADER representation đã chốt ở lượt C4 (headerName); tích hợp producer/UI còn chưa kiểm chứng.
+- Extraction failure có ảnh hưởng status hay không; precedence biến và overwrite extraction. Empty assertions đã chốt ở C6: explicit list rỗng không có assertion failure; execution error vẫn lỗi.
+- Unit thực thi/attempt/idempotency, redelivery và một nơi chịu trách nhiệm persist result.
+- Cách chứng minh các test độc lập để chạy song song; không suy diễn dependency graph.
+- Account/project permissions, lifecycle/cancel của backend nằm ngoài worker, cần phối hợp khi tích hợp.
+
+Chi tiết nội bộ có thể tự chọn và ghi rationale. Nếu cần đổi wire contract/schema hoặc hành vi chung giữa thành viên, ghi điểm vướng cụ thể và yêu cầu thống nhất, không tự sửa.
+
+## 7. Definition of Done cho một lượt
+
+- Đúng phạm vi và contract; không có placeholder/TODO thay cho hành vi được hứa.
+- Có test cho logic mới hoặc regression cho lỗi; assertions kiểm tra kết quả có ý nghĩa.
+- Chạy test mục tiêu và toàn worker; phân biệt compile/unit/integration, ghi thật số failure/skipped/BLOCKED.
+- Đọc lại mọi file mới/sửa; kiểm tra git diff/status, không credential hoặc thay đổi module ngoài ý muốn.
+- Cập nhật README khi hành vi đổi và nhật ký checklist, chỉ định đúng một đầu việc tiếp theo.
+
+## 8. Bàn giao hiện tại và baseline lịch sử
+
+- Lượt lập kế hoạch ban đầu chỉ sửa tài liệu; sau đó R1–R3 và B3/B4 đã được triển khai/kiểm chứng như mục trạng thái ở trên.
+- Điểm bắt đầu tiếp theo: **đối chiếu nghiệm thu A–C; chưa mở rộng D**. C5 Draft 7 offline chỉ local acyclic JSON Pointer refs, schema depth <=64; producer phải normalize OpenAPI, chưa sandbox/schema regex timeout. C6 engine nội bộ giữ đủ ordered PASS/FAIL, không trả partial summary khi error; mapping TestResult ERROR ở mốc sau. C4 headerName/multi-values, C3 definite selectors/missing-null/exact numeric giữ regression. Mốc B đã kiểm chứng loopback; suppression không phải redaction hoặc bảo đảm an toàn khi override logger/log DTO.
+- Mốc 57 test pass là baseline chức năng nhỏ, không phải bằng chứng toàn worker đã hoàn thiện.
