@@ -78,6 +78,43 @@ class JobExecutionServiceTest {
     }
 
     @Test
+    void offloadsBlockingPersistenceToBoundedElasticScheduler() {
+        var req = new TestCaseRequest("GET", "/first", Map.of(), Map.of(), Map.of(), null);
+        var tc = new TestExecutionJob.JobTestCase(caseId1, "op1", "First Test", "VALID", 1, req, List.of(), List.of());
+        var env = new TestExecutionJob.Environment(UUID.randomUUID(), "Staging", "http://localhost:8080", Map.of());
+        var settings = new TestExecutionJob.Settings(5000L, 0, 1, false);
+        var job = new TestExecutionJob(UUID.randomUUID(), runId, UUID.randomUUID(), env, settings, List.of(tc));
+
+        var execution = mock(SequentialExecution.class);
+        var stepResult = new SequentialExecution.StepResult(
+                caseId1.toString(),
+                SequentialExecution.Status.PASSED,
+                null,
+                new HttpResponseData(200, Map.of(), "ok", 15, null),
+                new AssertionEngine.Evaluation(List.of()),
+                null
+        );
+        when(execution.executeStream(eq("http://localhost:8080"), any(), anyList(), any(), eq(false)))
+                .thenReturn(Flux.just(stepResult));
+
+        var persistenceThreadName = new java.util.concurrent.atomic.AtomicReference<String>();
+        UUID savedId = UUID.randomUUID();
+        when(resultStore.save(eq(runId), eq(caseId1), eq("First Test"), eq("VALID"), eq(stepResult)))
+                .thenAnswer(invocation -> {
+                    persistenceThreadName.set(Thread.currentThread().getName());
+                    return savedId;
+                });
+
+        var service = new JobExecutionService(execution, resultStore);
+        var savedIds = service.executeJob(job);
+
+        assertEquals(List.of(savedId), savedIds);
+        assertNotNull(persistenceThreadName.get());
+        assertTrue(persistenceThreadName.get().startsWith("boundedElastic-"),
+                "Expected JPA persistence on boundedElastic scheduler, got: " + persistenceThreadName.get());
+    }
+
+    @Test
     void rejectsNullJob() {
         var execution = mock(SequentialExecution.class);
         var service = new JobExecutionService(execution, resultStore);
