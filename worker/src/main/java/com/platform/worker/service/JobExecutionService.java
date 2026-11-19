@@ -7,11 +7,12 @@ import com.platform.worker.persistence.TestResultStore;
 import com.platform.worker.runner.RetryingHttpRunner;
 import com.platform.worker.runner.WebClientHttpRunner;
 import com.platform.worker.runtime.SequentialExecution;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,8 +32,9 @@ public class JobExecutionService {
     private final SequentialExecution customExecution;
     private final TestResultStore resultStore;
 
+    @Autowired
     public JobExecutionService(WebClientHttpRunner runner, TestResultStore resultStore) {
-        this(runner::execute, resultStore);
+        this(Objects.requireNonNull(runner, "WebClientHttpRunner is required")::execute, resultStore);
     }
 
     public JobExecutionService(BiFunction<ResolvedHttpRequest, Duration, Mono<HttpResponseData>> runner, TestResultStore resultStore) {
@@ -62,30 +64,28 @@ public class JobExecutionService {
                 ? customExecution
                 : new SequentialExecution(new RetryingHttpRunner(runner, job.settings().maxRetries()));
 
-        List<UUID> savedResultIds = new ArrayList<>();
-
-        // Real-time streaming persistence: persist each step immediately upon completion
-        executor.executeStream(
+        // Offload blocking JPA persistence from Netty event-loop threads to boundedElastic.
+        List<UUID> savedResultIds = executor.executeStream(
                 job.environment().baseUrl(),
                 job.environment().variables(),
                 steps,
                 timeout,
                 job.settings().stopOnFirstFailure()
-        ).doOnNext(stepResult -> {
+        ).publishOn(Schedulers.boundedElastic())
+         .map(stepResult -> {
             var testCase = testCasesById.get(stepResult.stepId());
             if (testCase == null) {
                 throw new IllegalStateException("Step result id not found in job: " + stepResult.stepId());
             }
-            UUID savedId = resultStore.save(
+            return resultStore.save(
                     job.testRunId(),
                     testCase.id(),
                     testCase.name(),
                     testCase.testType(),
                     stepResult
             );
-            savedResultIds.add(savedId);
-        }).blockLast();
+        }).collectList().block();
 
-        return List.copyOf(savedResultIds);
+        return savedResultIds == null ? List.of() : List.copyOf(savedResultIds);
     }
 }
